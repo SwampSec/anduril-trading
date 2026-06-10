@@ -1,0 +1,42 @@
+# API keys and secrets — never commit
+.env
+.env.*
+!.env.trading.example
+.env.trading
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local install output (created by anduril_v2.py on user machine)
+TradingSetup/
+
+# Logs
+*.log
