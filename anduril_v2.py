@@ -9,7 +9,7 @@
     ╚═══════════════════════════════════════════════════════════════╝
 
     Anduril v1.0  --  Cross-platform installer
-    Supports: macOS (Apple Silicon + Intel)  |  Windows 10/11
+    Supports: macOS (Apple Silicon + Intel)  |  Windows 10/11  |  Linux
     Python 3.12+ required
 
     Usage:
@@ -34,6 +34,7 @@ VENV_DIR     = INSTALL_ROOT / "venv"
 ENV_FILE     = INSTALL_ROOT / ".env.trading"
 IS_WIN       = platform.system() == "Windows"
 IS_MAC       = platform.system() == "Darwin"
+IS_LINUX     = platform.system() == "Linux"
 IS_ARM       = platform.machine() in ("arm64", "aarch64")
 
 PYTHON_EXE   = str(VENV_DIR / ("Scripts" if IS_WIN else "bin") / ("python.exe" if IS_WIN else "python"))
@@ -338,6 +339,93 @@ def write_app():
         ok("Guide already exists")
 
 # ──────────────────────────────────────────────────────────────────
+# LAUNCHER ICONS
+# ──────────────────────────────────────────────────────────────────
+def _logo_jpg():
+    return INSTALL_ROOT / "anduril_logo.jpg"
+
+def _desktop_dir():
+    for name in ("Desktop", "desktop"):
+        d = Path.home() / name
+        if d.exists():
+            return d
+    return None
+
+def _set_macos_icon(file_path, image_path):
+    script = textwrap.dedent(f"""
+        use framework "AppKit"
+        use scripting additions
+        set iconImage to current application's NSImage's alloc()'s initWithContentsOfFile:"{image_path}"
+        set targetFile to POSIX file "{file_path}"
+        current application's NSWorkspace's sharedWorkspace()'s setIcon:iconImage forFile:(POSIX path of targetFile) options:0
+    """).strip()
+    subprocess.run(["osascript", "-l", "AppleScript", "-e", script],
+                   check=True, capture_output=True)
+
+def _write_windows_ico(jpg_path, ico_path):
+    ps1 = INSTALL_ROOT / "_make_ico.ps1"
+    ps1.write_text(textwrap.dedent(f"""
+        Add-Type -AssemblyName System.Drawing
+        $bmp = [System.Drawing.Bitmap]::FromFile('{jpg_path}')
+        $hIcon = $bmp.GetHicon()
+        $icon = [System.Drawing.Icon]::FromHandle($hIcon)
+        $stream = [System.IO.File]::Create('{ico_path}')
+        $icon.Save($stream)
+        $stream.Close()
+        $bmp.Dispose()
+    """).strip(), encoding="utf-8")
+    try:
+        run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)])
+    finally:
+        ps1.unlink(missing_ok=True)
+
+def _create_windows_shortcut(lnk_path, target, icon_ico, work_dir):
+    ps1 = INSTALL_ROOT / "_make_shortcut.ps1"
+    ps1.write_text(textwrap.dedent(f"""
+        $WshShell = New-Object -ComObject WScript.Shell
+        $Shortcut = $WshShell.CreateShortcut('{lnk_path}')
+        $Shortcut.TargetPath = '{target}'
+        $Shortcut.WorkingDirectory = '{work_dir}'
+        $Shortcut.IconLocation = '{icon_ico},0'
+        $Shortcut.Description = 'Anduril Trading Suite'
+        $Shortcut.Save()
+    """).strip(), encoding="utf-8")
+    try:
+        run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)])
+    finally:
+        ps1.unlink(missing_ok=True)
+
+def _write_linux_desktop(dest, exec_sh, icon_jpg):
+    dest.write_text(textwrap.dedent(f"""
+        [Desktop Entry]
+        Name=Anduril Trading
+        Comment=Anduril Trading Suite
+        Exec={exec_sh}
+        Icon={icon_jpg}
+        Terminal=true
+        Type=Application
+        Categories=Finance;Office;
+        StartupNotify=true
+    """).lstrip())
+    dest.chmod(0o755)
+
+def _apply_launcher_icon(target):
+    logo = _logo_jpg()
+    if not logo.exists():
+        warn(f"Logo not found -- skipping icon for {target.name}")
+        return
+    try:
+        if IS_MAC:
+            _set_macos_icon(str(target.resolve()), str(logo.resolve()))
+            ok(f"Icon set: {target.name}")
+        elif IS_WIN:
+            pass  # Windows uses .lnk with embedded icon path
+        elif IS_LINUX:
+            ok(f"Icon linked via .desktop: {logo.name}")
+    except Exception as e:
+        warn(f"Could not set icon on {target.name}: {e}")
+
+# ──────────────────────────────────────────────────────────────────
 # LAUNCHER
 # ──────────────────────────────────────────────────────────────────
 def write_launcher():
@@ -363,11 +451,23 @@ python "{DASH_DIR}\\app.py"
 ''')
         ok(f"launch.bat: {bat}")
 
-        step("Desktop shortcut")
-        desktop = Path.home() / "Desktop"
-        if desktop.exists():
-            shortcut = desktop / "Anduril Trading.bat"
-            shutil.copy(bat, shortcut)
+        logo = _logo_jpg()
+        ico_path = INSTALL_ROOT / "anduril_logo.ico"
+        if logo.exists():
+            step("Writing shortcut icon (.ico)")
+            _write_windows_ico(str(logo.resolve()), str(ico_path.resolve()))
+            ok(f"Written: {ico_path}")
+
+        step("Desktop shortcut (.lnk)")
+        desktop = _desktop_dir()
+        if desktop:
+            shortcut = desktop / "Anduril Trading.lnk"
+            if logo.exists() and ico_path.exists():
+                _create_windows_shortcut(str(shortcut.resolve()), str(bat.resolve()),
+                                         str(ico_path.resolve()), str(INSTALL_ROOT.resolve()))
+            else:
+                _create_windows_shortcut(str(shortcut.resolve()), str(bat.resolve()),
+                                         str(bat.resolve()), str(INSTALL_ROOT.resolve()))
             ok(f"Desktop shortcut: {shortcut}")
         else:
             warn("Desktop not found -- run launch.bat manually")
@@ -390,23 +490,47 @@ python "{DASH_DIR}/app.py"
         sh.chmod(0o755)
         ok(f"launch.sh: {sh}")
 
-        step("Desktop shortcut (.command)")
-        cmd_script = INSTALL_ROOT / "Anduril Trading.command"
-        cmd_script.write_text(
-            f'''#!/usr/bin/env bash
+        desktop = _desktop_dir()
+        logo = _logo_jpg()
+
+        if IS_MAC:
+            step("Desktop shortcut (.command)")
+            cmd_script = INSTALL_ROOT / "Anduril Trading.command"
+            cmd_script.write_text(
+                f'''#!/usr/bin/env bash
 source "{VENV_DIR}/bin/activate"
-open "http://127.0.0.1:8050"
+open "http://127.0.0.1:8050" 2>/dev/null || xdg-open "http://127.0.0.1:8050" 2>/dev/null || true
 python "{DASH_DIR}/app.py"
 ''')
-        cmd_script.chmod(0o755)
-        desktop = Path.home() / "Desktop"
-        if desktop.exists():
-            dest = desktop / "Anduril Trading.command"
-            shutil.copy(cmd_script, dest)
-            dest.chmod(0o755)
-            ok(f"Desktop shortcut: {dest}")
+            cmd_script.chmod(0o755)
+            _apply_launcher_icon(cmd_script)
+            if desktop:
+                dest = desktop / "Anduril Trading.command"
+                shutil.copy(cmd_script, dest)
+                dest.chmod(0o755)
+                _apply_launcher_icon(dest)
+                ok(f"Desktop shortcut: {dest}")
+            else:
+                warn("Desktop not found -- run launch.sh manually")
+
+        elif IS_LINUX:
+            step("Desktop shortcut (.desktop)")
+            desktop_entry = INSTALL_ROOT / "Anduril Trading.desktop"
+            _write_linux_desktop(desktop_entry, str(sh.resolve()), str(logo.resolve()))
+            ok(f"Written: {desktop_entry}")
+            if desktop:
+                dest = desktop / "Anduril Trading.desktop"
+                shutil.copy(desktop_entry, dest)
+                dest.chmod(0o755)
+                ok(f"Desktop shortcut: {dest}")
+            apps_dir = Path.home() / ".local" / "share" / "applications"
+            apps_dir.mkdir(parents=True, exist_ok=True)
+            menu_entry = apps_dir / "anduril-trading.desktop"
+            shutil.copy(desktop_entry, menu_entry)
+            menu_entry.chmod(0o755)
+            ok(f"Applications menu: {menu_entry}")
         else:
-            warn("Desktop not found -- run launch.sh manually")
+            warn("Unknown Unix platform -- run launch.sh manually")
 
 # ──────────────────────────────────────────────────────────────────
 # SUMMARY
@@ -443,13 +567,18 @@ def print_summary():
 
     if IS_WIN:
         lines += [
-            (f"   Double-click  Anduril Trading.bat  on your Desktop",  "yellow"),
-            (f"   OR run:  {INSTALL_ROOT / 'launch.bat'}",            "dim"),
+            (f"   Double-click  Anduril Trading.lnk  on your Desktop",  "yellow"),
+            (f"   OR run:  {INSTALL_ROOT / 'launch.bat'}",              "dim"),
+        ]
+    elif IS_LINUX:
+        lines += [
+            (f"   Double-click  Anduril Trading.desktop  on Desktop",   "yellow"),
+            (f"   OR run:  bash {INSTALL_ROOT / 'launch.sh'}",          "dim"),
         ]
     else:
         lines += [
             (f"   Double-click  Anduril Trading.command  on Desktop",   "yellow"),
-            (f"   OR run:  bash {INSTALL_ROOT / 'launch.sh'}",        "dim"),
+            (f"   OR run:  bash {INSTALL_ROOT / 'launch.sh'}",          "dim"),
         ]
 
     lines += [
