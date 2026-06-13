@@ -1,0 +1,50 @@
+ANDÚRIL TRADING SUITE — Quick install
+=====================================
+
+What you need first
+-------------------
+• Python 3.12 or newer — https://www.python.org/downloads/
+  (On Windows: check "Add Python to PATH" during install.)
+• Internet connection for the first install (~5–10 minutes)
+• ~500 MB free disk space
+
+Install (all platforms)
+-----------------------
+1. Unzip this folder anywhere (Desktop, Documents, etc.)
+2. Open Terminal (Mac/Linux) or Command Prompt / PowerShell (Windows)
+3. Go into the unzipped folder, then run:
+
+   python anduril_v2.py
+
+   (Mac/Linux may need: python3 anduril_v2.py)
+
+4. Confirm when prompted. The installer creates everything under:
+   • Mac/Linux: ~/Anduril/
+   • Windows:   C:\Users\YourName\Anduril\
+
+5. Add free API keys (recommended):
+   Open ~/Anduril/.env.trading (created on first install)
+   Copy keys from .env.trading.example — get free keys at:
+   • Finnhub:    https://finnhub.io        (live quotes, IPOs, news)
+   • NewsData:   https://newsdata.io       (Live News — optional)
+   • Twelve Data: https://twelvedata.com    (optional fallback)
+
+Launch
+------
+• Double-click the desktop shortcut (Andúril Trading)
+• Or run ~/Anduril/launch.sh (Mac/Linux) / launch.bat (Windows)
+• Browser opens at http://127.0.0.1:8050
+• Investing guide: sidebar → Guide, or ~/Anduril/guide.html offline
+
+What's in this zip
+------------------
+  anduril_v2.py         — installer + dashboard (self-contained)
+  guide.html            — Hedge Fund Investing Reference Guide
+  .env.trading.example  — API key template
+  README.md             — full documentation
+  INSTALL.txt           — this file
+
+Charts and financials work without API keys. Live quotes, Level 2, and
+Live News work best with Finnhub + NewsData keys.
+
+Not financial advice. MIT license — use at your own risk.
