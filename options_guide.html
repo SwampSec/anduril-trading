@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Options Strategy Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#070A18;--panel:#0C1020;--card:#111628;--border:#1C2540;
+  --accent:#38BDF8;--profit:#34D399;--loss:#F87171;--warn:#FBBF24;--purple:#A78BFA;
+  --text:#C8D6EE;--muted:#3E5272;--hi:#161E36;--line:#1A2845;
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Inter',sans-serif;font-size:13px;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+
+/* HEADER */
+.hdr{height:52px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;position:relative;z-index:10}
+.hdr-logo{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:var(--accent);letter-spacing:.06em;display:flex;align-items:center;gap:8px}
+.hdr-logo::before{content:'⊗';font-size:18px}
+.hdr-sub{color:var(--muted);font-size:11px;border-left:1px solid var(--border);padding-left:16px;margin-left:4px}
+.hdr-actions{margin-left:auto;display:flex;align-items:center;gap:12px}
+.hdr-count{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)}
+.back-app-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:7px 12px;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.25);border-radius:6px;color:var(--accent);text-decoration:none;white-space:nowrap;letter-spacing:.04em;transition:border-color .12s,color .12s}
+.back-app-btn:hover{color:#E2EEFF;border-color:var(--accent)}
+
+/* LAYOUT */
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* SIDEBAR */
+.sidebar{width:248px;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0}
+.sidebar::-webkit-scrollbar{width:3px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.cat-label{padding:14px 16px 5px;font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.strat-btn{display:flex;align-items:center;gap:9px;padding:7px 16px;width:100%;border:none;background:none;text-align:left;color:var(--text);font-family:'Inter',sans-serif;font-size:12px;cursor:pointer;transition:background .12s,color .12s;line-height:1.3}
+.strat-btn:hover:not(.active){background:rgba(56,189,248,.08)}
+.strat-btn.active{background:var(--hi);color:var(--accent);border-right:2px solid var(--accent)}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:1px}
+.dot-bull{background:var(--profit)}
+.dot-bear{background:var(--loss)}
+.dot-neut{background:var(--warn)}
+.dot-vol{background:var(--accent)}
+.dot-arb{background:var(--purple)}
+.dot-time{background:#C084FC}
+
+/* CONTENT */
+.content{flex:1;overflow-y:auto;padding:24px}
+.content::-webkit-scrollbar{width:5px}
+.content::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* WELCOME */
+.welcome{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;opacity:.4}
+.welcome-glyph{font-size:56px;filter:grayscale(1)}
+.welcome-title{font-family:'IBM Plex Mono',monospace;font-size:16px;color:var(--muted)}
+.welcome-sub{font-size:12px;color:var(--muted)}
+
+/* STRATEGY HEADER */
+.strat-hdr{margin-bottom:18px}
+.strat-name{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;color:#E2EEFF;line-height:1.25;margin-bottom:8px}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;letter-spacing:.03em;border:1px solid transparent}
+.b-bull{background:rgba(52,211,153,.1);color:var(--profit);border-color:rgba(52,211,153,.25)}
+.b-bear{background:rgba(248,113,113,.1);color:var(--loss);border-color:rgba(248,113,113,.25)}
+.b-neut{background:rgba(251,191,36,.1);color:var(--warn);border-color:rgba(251,191,36,.25)}
+.b-vol{background:rgba(56,189,248,.1);color:var(--accent);border-color:rgba(56,189,248,.25)}
+.b-arb{background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.25)}
+.b-def{background:rgba(52,211,153,.08);color:#6EE7B7;border-color:rgba(52,211,153,.2)}
+.b-undef{background:rgba(248,113,113,.08);color:#FCA5A5;border-color:rgba(248,113,113,.2)}
+.b-lv{background:rgba(56,189,248,.08);color:#7DD3FC;border-color:rgba(56,189,248,.2)}
+.b-sv{background:rgba(251,191,36,.08);color:#FDE68A;border-color:rgba(251,191,36,.2)}
+
+/* CHART */
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.chart-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.chart-title{font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.legend{display:flex;gap:12px}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.leg-line{width:18px;height:2px;border-radius:1px}
+.chart-note{font-size:10px;color:var(--muted);font-style:italic;margin-top:6px}
+
+/* STATS */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 13px}
+.stat-lbl{font-size:9.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+.stat-val{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600}
+.sv-profit{color:var(--profit)}
+.sv-loss{color:var(--loss)}
+.sv-neut{color:var(--warn)}
+.sv-accent{color:var(--accent)}
+.sv-purple{color:var(--purple)}
+
+/* TWO-COL GRID */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px}
+.card-title{font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.card-body{font-size:12.5px;line-height:1.65;color:var(--text)}
+
+/* LEGS TABLE */
+.legs-wrap{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px}
+.legs-title{font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:10px 14px 6px}
+table{width:100%;border-collapse:collapse}
+th{background:#0A0E1C;padding:6px 14px;text-align:left;font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)}
+td{padding:7px 14px;font-family:'IBM Plex Mono',monospace;font-size:12px;border-bottom:1px solid rgba(28,37,64,.5);color:var(--text)}
+tr:last-child td{border-bottom:none}
+.long{color:var(--profit)}
+.short{color:var(--loss)}
+
+/* GREEKS */
+.greeks-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.greek{padding:4px 11px;border-radius:6px;font-size:11px;font-family:'IBM Plex Mono',monospace;font-weight:600}
+.gp{background:rgba(52,211,153,.12);color:var(--profit)}
+.gn{background:rgba(248,113,113,.12);color:var(--loss)}
+.gz{background:rgba(62,82,114,.2);color:var(--muted)}
+
+/* SVG */
+svg text{font-family:'IBM Plex Mono',monospace}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-logo">OPTIONS STRATEGY GUIDE</div>
+  <div class="hdr-sub">Payoff Diagrams · Construction · Greeks · Use Cases</div>
+  <div class="hdr-actions">
+    <a href="/" class="back-app-btn" title="Return to Andúril Trading Suite">← Andúril Trading</a>
+    <div class="hdr-count" id="stratCount"></div>
+  </div>
+</div>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content" id="content">
+    <div class="welcome">
+      <div class="welcome-glyph">📊</div>
+      <div class="welcome-title">Select a strategy</div>
+      <div class="welcome-sub">33 strategies with interactive payoff diagrams</div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ─── STRATEGY DATA ────────────────────────────────────────────────────────────
+const STRATEGIES = [
+
+// ── LONG OPTIONS ─────────────────────────────────────────────────────────────
+{id:'long_call',name:'Long Call',cat:'Long Options',dot:'bull',
+ outlook:'Bullish',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Pay a premium for the right to buy shares at the strike price. The maximum loss is the premium paid; profit potential is theoretically unlimited as the stock rises above breakeven.',
+ use:'Use when you expect a significant rally and want leveraged upside with capped downside. Best when IV is relatively low before entry.',
+ legs:[{pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Primary position'}],
+ stats:{maxP:'Unlimited',maxL:'-$5.00',be:'$105.00',dir:'Bullish ↑'},
+ greeks:{Δ:'+',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>Math.max(S-100,0)-5, range:[60,145]},
+
+{id:'long_put',name:'Long Put',cat:'Long Options',dot:'bear',
+ outlook:'Bearish',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Pay a premium for the right to sell shares at the strike price. Profit as the stock falls below breakeven. Maximum loss is the premium paid.',
+ use:'Use when expecting a meaningful decline. Also used as portfolio insurance against a long stock position.',
+ legs:[{pos:'Long',type:'Put',strike:'$100',exp:'30d',prem:'+$5.00',note:'Primary position'}],
+ stats:{maxP:'$95.00',maxL:'-$5.00',be:'$95.00',dir:'Bearish ↓'},
+ greeks:{Δ:'-',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>Math.max(100-S,0)-5, range:[55,140]},
+
+// ── SHORT OPTIONS ─────────────────────────────────────────────────────────────
+{id:'short_naked_call',name:'Short Naked Call',cat:'Short Options',dot:'bear',
+ outlook:'Bearish/Neutral',risk:'Unlimited Risk ⚠',vega:'Short Vega',theta:'Long Theta',
+ desc:'Sell a call without owning the underlying. Collect premium upfront. If the stock rallies past breakeven, losses are theoretically unlimited — the riskiest single-leg strategy.',
+ use:'Requires large capital and high margin. Use only when highly confident the stock will stay below the strike.',
+ legs:[{pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Unlimited risk above breakeven'}],
+ stats:{maxP:'+$5.00',maxL:'Unlimited',be:'$105.00',dir:'Bearish/Neutral ↓'},
+ greeks:{Δ:'-',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>5-Math.max(S-100,0), range:[60,145]},
+
+{id:'short_put',name:'Short Put',cat:'Short Options',dot:'bull',
+ outlook:'Bullish/Neutral',risk:'Defined Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Sell a put and collect premium. Obligated to buy 100 shares at the strike if assigned. Maximum profit is the premium received; maximum loss occurs if the stock falls to zero.',
+ use:'Income generation or acquiring stock at a lower effective cost basis. Popular cash-secured put strategy.',
+ legs:[{pos:'Short',type:'Put',strike:'$100',exp:'30d',prem:'-$5.00',note:'Obligation to buy at $100'}],
+ stats:{maxP:'+$5.00',maxL:'-$95.00',be:'$95.00',dir:'Bullish/Neutral ↑'},
+ greeks:{Δ:'+',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>5-Math.max(100-S,0), range:[55,140]},
+
+// ── STOCK + OPTION ────────────────────────────────────────────────────────────
+{id:'covered_call',name:'Covered Call / Covered Basket Call',cat:'Stock + Option',dot:'neut',
+ outlook:'Neutral to Slightly Bullish',risk:'Stock Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Own 100 shares (or a basket) and sell a call against them. The premium received lowers the effective cost basis and creates a profit cap at the strike. The call is "covered" because shares can be delivered on assignment. A Covered Basket Call applies the same concept to a portfolio of stocks.',
+ use:'Generate income on a long stock holding. Best in sideways to mildly bullish markets. Be prepared for the stock to be called away.',
+ legs:[{pos:'Long',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'100 shares'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Covered by shares'}],
+ stats:{maxP:'+$5.00',maxL:'-$95.00',be:'$95.00',dir:'Neutral/Bullish'},
+ greeks:{Δ:'+',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>Math.min(S-95,5), range:[60,140]},
+
+{id:'buy_write',name:'Buy Write',cat:'Stock + Option',dot:'neut',
+ outlook:'Neutral to Slightly Bullish',risk:'Stock Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Execute a covered call as a single simultaneous order — buy the stock and sell the call in one transaction. The result is identical to a covered call, but executed at a single net debit, often receiving better execution. Common institutional strategy for entering income-generating positions.',
+ use:'Same as covered call. The term "Buy Write" emphasizes the single-order execution. Net debit = stock price minus call premium.',
+ legs:[{pos:'Long',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Bought simultaneously'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Written at purchase'}],
+ stats:{maxP:'+$5.00',maxL:'-$95.00',be:'$95.00',dir:'Neutral/Bullish'},
+ greeks:{Δ:'+',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>Math.min(S-95,5), range:[60,140]},
+
+{id:'covered_put',name:'Covered Put',cat:'Stock + Option',dot:'bear',
+ outlook:'Bearish/Neutral',risk:'Unlimited Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Short 100 shares and sell a put against the short position. Premium received is capped profit if stock falls to or below strike. If the stock rises, losses are theoretically unlimited — the short stock exposure is the primary risk.',
+ use:'Income generation on a short stock position. A bearish equivalent of the covered call. Requires short stock margin.',
+ legs:[{pos:'Short',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Short 100 shares'},
+       {pos:'Short',type:'Put',strike:'$100',exp:'30d',prem:'-$5.00',note:'Covered by short stock'}],
+ stats:{maxP:'+$5.00',maxL:'Unlimited',be:'$105.00',dir:'Bearish ↓'},
+ greeks:{Δ:'-',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>Math.min(105-S,5), range:[60,145]},
+
+{id:'protective_call',name:'Protective Call',cat:'Stock + Option',dot:'bear',
+ outlook:'Bearish (Protected)',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Hold a short stock position and buy a call to cap the upside loss. The call sets a ceiling on losses: if the stock rallies, the long call gains in value to offset the short stock loss. Think of it as insurance for a short position.',
+ use:'Use when short a stock but want protection against a sudden rally. The premium paid defines your maximum loss on the upside.',
+ legs:[{pos:'Short',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Short 100 shares'},
+       {pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Upside protection'}],
+ stats:{maxP:'$95.00',maxL:'-$5.00',be:'$95.00',dir:'Bearish (Protected) ↓'},
+ greeks:{Δ:'-',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>{if(S<=100)return 95-S; return -5;}, range:[55,140]},
+
+{id:'protective_put',name:'Protective Put',cat:'Stock + Option',dot:'bull',
+ outlook:'Bullish (Protected)',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Hold long stock and buy a put as insurance (floor). If the stock falls below the strike, the put gains value to offset the loss. Also called a "married put." Sets a defined floor on the downside while preserving unlimited upside.',
+ use:'Portfolio insurance. Use when holding a long-term stock position and wanting protection against a sharp decline without selling shares.',
+ legs:[{pos:'Long',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Long 100 shares'},
+       {pos:'Long',type:'Put',strike:'$100',exp:'30d',prem:'+$5.00',note:'Downside floor'}],
+ stats:{maxP:'Unlimited',maxL:'-$5.00',be:'$105.00',dir:'Bullish (Protected) ↑'},
+ greeks:{Δ:'+',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>Math.max(S-105,-5), range:[60,145]},
+
+// ── SPREADS ───────────────────────────────────────────────────────────────────
+{id:'long_call_spread',name:'Long Call Spread',cat:'Spreads',dot:'bull',
+ outlook:'Bullish',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Also called a Bull Call Spread. Buy a lower-strike call and sell a higher-strike call (same expiration). The sold call offsets the cost of the bought call but caps the upside. Both the maximum profit and maximum loss are defined from the outset.',
+ use:'When moderately bullish — you expect a move higher but not an explosive rally. Better risk/reward ratio than a long call when IV is elevated.',
+ legs:[{pos:'Long',type:'Call',strike:'$95',exp:'30d',prem:'+$7.00',note:'Primary profit leg'},
+       {pos:'Short',type:'Call',strike:'$105',exp:'30d',prem:'-$3.00',note:'Reduces cost, caps upside'}],
+ stats:{maxP:'+$6.00',maxL:'-$4.00',be:'$99.00',dir:'Bullish ↑'},
+ greeks:{Δ:'+',Γ:'~',Θ:'~',V:'~'},
+ payoff:S=>Math.min(Math.max(S-99,-4),6), range:[70,130]},
+
+{id:'long_put_spread',name:'Long Put Spread',cat:'Spreads',dot:'bear',
+ outlook:'Bearish',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Also called a Bear Put Spread. Buy a higher-strike put and sell a lower-strike put (same expiration). The sold put reduces the cost of the bought put but floors the downside profit. Both profit and loss are defined.',
+ use:'When moderately bearish. Cheaper than a long put outright. Use when expecting a moderate decline rather than a crash.',
+ legs:[{pos:'Long',type:'Put',strike:'$105',exp:'30d',prem:'+$7.00',note:'Primary profit leg'},
+       {pos:'Short',type:'Put',strike:'$95',exp:'30d',prem:'-$3.00',note:'Reduces cost, floors downside'}],
+ stats:{maxP:'+$6.00',maxL:'-$4.00',be:'$101.00',dir:'Bearish ↓'},
+ greeks:{Δ:'-',Γ:'~',Θ:'~',V:'~'},
+ payoff:S=>Math.min(Math.max(101-S,-4),6), range:[70,130]},
+
+{id:'short_call_spread',name:'Short Call Spread',cat:'Spreads',dot:'bear',
+ outlook:'Bearish/Neutral',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Also called a Bear Call Spread or Credit Call Spread. Sell a lower-strike call and buy a higher-strike call (same expiry). Receive a net credit. Profit if the stock stays below the short strike at expiration.',
+ use:'Income strategy. Use when expecting the stock to stay flat or decline. The net credit is maximum profit; the spread width minus credit is maximum loss.',
+ legs:[{pos:'Short',type:'Call',strike:'$95',exp:'30d',prem:'-$7.00',note:'Primary income leg'},
+       {pos:'Long',type:'Call',strike:'$105',exp:'30d',prem:'+$3.00',note:'Risk cap on upside'}],
+ stats:{maxP:'+$4.00',maxL:'-$6.00',be:'$99.00',dir:'Bearish/Neutral ↓'},
+ greeks:{Δ:'-',Γ:'~',Θ:'+',V:'-'},
+ payoff:S=>Math.min(Math.max(99-S,-6),4), range:[70,130]},
+
+{id:'short_put_spread',name:'Short Put Spread',cat:'Spreads',dot:'bull',
+ outlook:'Bullish/Neutral',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Also called a Bull Put Spread or Credit Put Spread. Sell a higher-strike put and buy a lower-strike put (same expiry). Receive a net credit. Profit if the stock stays above the short strike at expiration.',
+ use:'Income strategy. Use when expecting the stock to stay flat or rise. One of the most popular income-generating spreads. Often used to acquire stock at a lower effective cost.',
+ legs:[{pos:'Short',type:'Put',strike:'$105',exp:'30d',prem:'-$7.00',note:'Primary income leg'},
+       {pos:'Long',type:'Put',strike:'$95',exp:'30d',prem:'+$3.00',note:'Risk cap on downside'}],
+ stats:{maxP:'+$4.00',maxL:'-$6.00',be:'$101.00',dir:'Bullish/Neutral ↑'},
+ greeks:{Δ:'+',Γ:'~',Θ:'+',V:'-'},
+ payoff:S=>Math.min(Math.max(S-101,-6),4), range:[70,130]},
+
+// ── STRADDLES & STRANGLES ─────────────────────────────────────────────────────
+{id:'long_straddle',name:'Long Straddle',cat:'Straddles & Strangles',dot:'vol',
+ outlook:'Neutral on Direction',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Buy both an ATM call and an ATM put with the same strike and expiration. Profit if the stock makes a large move in either direction. The combined premium is the maximum loss (if stock pins exactly at the strike).',
+ use:'Before major binary events: earnings, FDA approvals, M&A announcements. Requires a move large enough to exceed the total premium paid.',
+ legs:[{pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Upside profit leg'},
+       {pos:'Long',type:'Put',strike:'$100',exp:'30d',prem:'+$5.00',note:'Downside profit leg'}],
+ stats:{maxP:'Unlimited',maxL:'-$10.00',be:'$90 / $110',dir:'Volatility ↕'},
+ greeks:{Δ:'~0',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>Math.abs(S-100)-10, range:[60,145]},
+
+{id:'long_strangle',name:'Long Strangle',cat:'Straddles & Strangles',dot:'vol',
+ outlook:'Neutral on Direction',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Buy an OTM call and an OTM put (different strikes, same expiration). Cheaper than a straddle but requires an even larger move to be profitable. Both options are out-of-the-money at entry.',
+ use:'Like a straddle but with lower upfront cost and wider breakevens. Good when expecting a very large move but uncertain on direction.',
+ legs:[{pos:'Long',type:'Call',strike:'$105',exp:'30d',prem:'+$3.00',note:'OTM call'},
+       {pos:'Long',type:'Put',strike:'$95',exp:'30d',prem:'+$3.00',note:'OTM put'}],
+ stats:{maxP:'Unlimited',maxL:'-$6.00',be:'$89 / $111',dir:'Volatility ↕'},
+ greeks:{Δ:'~0',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>Math.max(S-105,0)+Math.max(95-S,0)-6, range:[60,145]},
+
+{id:'short_straddle',name:'Short Straddle',cat:'Straddles & Strangles',dot:'neut',
+ outlook:'Neutral',risk:'Unlimited Risk ⚠',vega:'Short Vega',theta:'Long Theta',
+ desc:'Sell an ATM call and an ATM put with the same strike and expiration. Collect the full combined premium. Maximum profit occurs if the stock stays exactly at the strike. Losses are unlimited in either direction.',
+ use:'High-probability income strategy when expecting the stock to remain range-bound. Extremely sensitive to volatility. Only suitable for experienced traders with large accounts.',
+ legs:[{pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Unlimited upside risk'},
+       {pos:'Short',type:'Put',strike:'$100',exp:'30d',prem:'-$5.00',note:'Large downside risk'}],
+ stats:{maxP:'+$10.00',maxL:'Unlimited',be:'$90 / $110',dir:'Neutral →'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>10-Math.abs(S-100), range:[60,145]},
+
+{id:'short_strangle',name:'Short Strangle',cat:'Straddles & Strangles',dot:'neut',
+ outlook:'Neutral',risk:'Unlimited Risk ⚠',vega:'Short Vega',theta:'Long Theta',
+ desc:'Sell an OTM call and an OTM put (different strikes, same expiration). Collect premium from both. Profit if the stock stays within the two breakeven levels. Losses are unlimited outside the breakevens.',
+ use:'Slightly lower premium than a short straddle but wider profit zone. Used by premium sellers expecting low volatility in a range. The OTM strikes give some buffer before losses begin.',
+ legs:[{pos:'Short',type:'Call',strike:'$105',exp:'30d',prem:'-$3.00',note:'Upper risk boundary'},
+       {pos:'Short',type:'Put',strike:'$95',exp:'30d',prem:'-$3.00',note:'Lower risk boundary'}],
+ stats:{maxP:'+$6.00',maxL:'Unlimited',be:'$89 / $111',dir:'Neutral →'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>6-Math.max(S-105,0)-Math.max(95-S,0), range:[60,145]},
+
+// ── CONDORS ───────────────────────────────────────────────────────────────────
+{id:'long_iron_condor',name:'Long Iron Condor',cat:'Condors',dot:'vol',
+ outlook:'High Volatility Expected',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Buy an OTM put spread and buy an OTM call spread simultaneously. Net debit paid. Profits when the stock makes a large move in either direction beyond the outer strikes. The opposite of the Short Iron Condor. Both maximum profit and maximum loss are defined.',
+ use:'Use before a known catalyst when you expect a large move but want defined risk versus a straddle or strangle.',
+ legs:[{pos:'Long',type:'Put',strike:'$90',exp:'30d',prem:'+$3.00',note:'Lower put spread (long leg)'},
+       {pos:'Short',type:'Put',strike:'$85',exp:'30d',prem:'-$1.50',note:'Lower put spread (short leg)'},
+       {pos:'Long',type:'Call',strike:'$110',exp:'30d',prem:'+$3.00',note:'Upper call spread (long leg)'},
+       {pos:'Short',type:'Call',strike:'$115',exp:'30d',prem:'-$1.50',note:'Upper call spread (short leg)'}],
+ stats:{maxP:'+$2.00',maxL:'-$3.00',be:'$87 / $113',dir:'Volatility ↕'},
+ greeks:{Δ:'~0',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>{
+   let p=Math.max(90-S,0)-3+1.5-Math.max(85-S,0)+Math.max(S-110,0)-3+1.5-Math.max(S-115,0);
+   return p;
+ }, range:[60,145]},
+
+{id:'short_iron_condor',name:'Short Iron Condor',cat:'Condors',dot:'neut',
+ outlook:'Low Volatility Expected',risk:'Defined Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Sell an OTM put spread and sell an OTM call spread simultaneously. Collect a net credit. Profit if the stock stays within the inner strikes through expiration. One of the most popular defined-risk income strategies.',
+ use:'The classic "sell premium" strategy. Best when IV is high and you expect the stock to trade in a range. Defined risk on both sides unlike a short straddle/strangle.',
+ legs:[{pos:'Short',type:'Put',strike:'$90',exp:'30d',prem:'-$3.00',note:'Inner put (income leg)'},
+       {pos:'Long',type:'Put',strike:'$85',exp:'30d',prem:'+$1.50',note:'Outer put (risk cap)'},
+       {pos:'Short',type:'Call',strike:'$110',exp:'30d',prem:'-$3.00',note:'Inner call (income leg)'},
+       {pos:'Long',type:'Call',strike:'$115',exp:'30d',prem:'+$1.50',note:'Outer call (risk cap)'}],
+ stats:{maxP:'+$3.00',maxL:'-$2.00',be:'$87 / $113',dir:'Neutral →'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>{
+   let p=3-Math.max(90-S,0)-1.5+Math.max(85-S,0)+3-Math.max(S-110,0)-1.5+Math.max(S-115,0);
+   return p;
+ }, range:[60,145]},
+
+// ── BUTTERFLIES ───────────────────────────────────────────────────────────────
+{id:'long_butterfly',name:'Long Butterfly',cat:'Butterflies',dot:'neut',
+ outlook:'Neutral (Pin at Strike)',risk:'Defined Risk',vega:'Short Vega',theta:'Long Theta',
+ desc:'Buy 1 lower-strike call, sell 2 middle-strike calls, buy 1 higher-strike call — equidistant strikes. Maximum profit occurs if the stock pins exactly at the middle strike at expiration. Both profit and loss are defined. Net debit strategy.',
+ use:'Use when expecting the stock to stay near a specific price. Cheap way to express a pinning view. Works best in low-IV environments when stock is expected to be quiet.',
+ legs:[{pos:'Long',type:'Call',strike:'$90',exp:'30d',prem:'+$12.00',note:'Lower wing'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00 x2',note:'Body (sold twice)'},
+       {pos:'Long',type:'Call',strike:'$110',exp:'30d',prem:'+$2.00',note:'Upper wing'}],
+ stats:{maxP:'+$6.00',maxL:'-$4.00',be:'$94 / $106',dir:'Neutral (Pin $100)'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>{
+   if(S<90)return -4;
+   if(S<100)return S-94;
+   if(S<110)return 106-S;
+   return -4;
+ }, range:[70,130]},
+
+{id:'unbalanced_butterfly',name:'Unbalanced Butterfly',cat:'Butterflies',dot:'neut',
+ outlook:'Directionally Biased',risk:'Defined Risk (Asymmetric)',vega:'Mixed',theta:'Mixed',
+ desc:'Also called a Broken Wing Butterfly. Like a standard butterfly but with unequal wing widths — typically making one side free or near zero cost. Creates an asymmetric payoff: full upside profit potential on one side, reduced (or zero) risk on the other. Often structured for a net credit.',
+ use:'Use when you have a directional bias AND want a pinning effect. Gives up some profit potential to eliminate risk on one wing, often entering for even money or a credit.',
+ legs:[{pos:'Long',type:'Call',strike:'$90',exp:'30d',prem:'+$12.00',note:'Lower wing'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00 x2',note:'Body'},
+       {pos:'Long',type:'Call',strike:'$115',exp:'30d',prem:'+$1.00',note:'Wider upper wing'}],
+ stats:{maxP:'+$7.00',maxL:'-$3.00 / -$8.00',be:'$93 / $107',dir:'Neutral/Bullish Bias'},
+ greeks:{Δ:'+',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>{
+   let v=Math.max(S-90,0)-12 + 2*(5-Math.max(S-100,0)) + Math.max(S-115,0)-1;
+   return v;
+ }, range:[65,135]},
+
+{id:'short_butterfly',name:'Short Butterfly',cat:'Butterflies',dot:'vol',
+ outlook:'Volatility Expected',risk:'Defined Risk',vega:'Long Vega',theta:'Short Theta',
+ desc:'Sell 1 lower-strike call, buy 2 middle-strike calls, sell 1 higher-strike call. Net credit received. Profits if the stock moves significantly away from the middle strike in either direction. The inverse of the Long Butterfly.',
+ use:'Use when expecting a large move in either direction but wanting defined risk. Cheaper than a straddle entry but with lower max profit. The credit received is the maximum profit at extremes.',
+ legs:[{pos:'Short',type:'Call',strike:'$90',exp:'30d',prem:'-$12.00',note:'Lower wing (sold)'},
+       {pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00 x2',note:'Body (bought twice)'},
+       {pos:'Short',type:'Call',strike:'$110',exp:'30d',prem:'-$2.00',note:'Upper wing (sold)'}],
+ stats:{maxP:'+$4.00',maxL:'-$6.00',be:'$94 / $106',dir:'Volatility ↕'},
+ greeks:{Δ:'~0',Γ:'+',Θ:'-',V:'+'},
+ payoff:S=>{
+   if(S<90)return 4;
+   if(S<100)return 94-S;
+   if(S<110)return S-106;
+   return 4;
+ }, range:[70,130]},
+
+// ── COLLARS & SYNTHETICS ──────────────────────────────────────────────────────
+{id:'collar',name:'Collar',cat:'Collars & Synthetics',dot:'neut',
+ outlook:'Neutral (Protected Stock)',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Long stock + buy a lower-strike put (protection) + sell a higher-strike call (income). The sold call premium can fully or partially offset the put cost. Creates a bounded return: profits capped at call strike, losses floored at put strike.',
+ use:'Protecting a winning stock position at low or zero cost. The sold call "pays for" the put. Common for executives holding large stock positions who want downside protection.',
+ legs:[{pos:'Long',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Existing long position'},
+       {pos:'Long',type:'Put',strike:'$95',exp:'30d',prem:'+$3.00',note:'Downside floor'},
+       {pos:'Short',type:'Call',strike:'$105',exp:'30d',prem:'-$3.00',note:'Upside cap (pays for put)'}],
+ stats:{maxP:'+$5.00',maxL:'-$5.00',be:'$100.00',dir:'Neutral (Protected)'},
+ greeks:{Δ:'+',Γ:'~',Θ:'~',V:'~'},
+ payoff:S=>Math.max(-5,Math.min(S-100,5)), range:[75,125]},
+
+{id:'short_collar',name:'Short Collar',cat:'Collars & Synthetics',dot:'neut',
+ outlook:'Neutral (Protected Short)',risk:'Defined Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Short stock + sell a lower-strike put (income) + buy a higher-strike call (protection). Mirrors the collar for a short stock position. The call protects against a rally; the sold put generates income but adds downside obligation.',
+ use:'Protecting a short stock position. Defines both maximum profit (below put strike) and maximum loss (above call strike). A bearish equivalent of the collar.',
+ legs:[{pos:'Short',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Existing short position'},
+       {pos:'Short',type:'Put',strike:'$95',exp:'30d',prem:'-$3.00',note:'Income (adds put obligation)'},
+       {pos:'Long',type:'Call',strike:'$105',exp:'30d',prem:'+$3.00',note:'Upside protection'}],
+ stats:{maxP:'+$5.00',maxL:'-$5.00',be:'$100.00',dir:'Neutral (Protected Short)'},
+ greeks:{Δ:'-',Γ:'~',Θ:'~',V:'~'},
+ payoff:S=>Math.max(-5,Math.min(100-S,5)), range:[75,125]},
+
+{id:'synthetic',name:'Synthetic Long',cat:'Collars & Synthetics',dot:'bull',
+ outlook:'Bullish',risk:'Unlimited Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Buy an ATM call and sell an ATM put (same strike, same expiration). When premiums are equal, the net cost is zero. The resulting payoff mirrors long stock exactly — unlimited upside and downside risk. Creates leveraged stock exposure without owning shares.',
+ use:'Replicate long stock with less capital. Used when stock ownership is impractical. Also used in futures/forex. Watch put-call parity — the synthetic may trade at a premium or discount vs. the stock.',
+ legs:[{pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Upside participation'},
+       {pos:'Short',type:'Put',strike:'$100',exp:'30d',prem:'-$5.00',note:'Downside exposure'}],
+ stats:{maxP:'Unlimited',maxL:'Unlimited',be:'$100.00',dir:'Bullish ↑'},
+ greeks:{Δ:'+1.0',Γ:'~0',Θ:'~0',V:'~0'},
+ payoff:S=>S-100, range:[60,145]},
+
+{id:'short_synthetic',name:'Short Synthetic',cat:'Collars & Synthetics',dot:'bear',
+ outlook:'Bearish',risk:'Unlimited Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Sell an ATM call and buy an ATM put (same strike, same expiration). Mirrors short stock exactly. The position profits as the stock falls and loses as it rises. Requires less capital than short stock but carries the same risk profile.',
+ use:'Synthetic short exposure when short selling is restricted, expensive to borrow, or when you want to express a bearish view through options. Subject to the same margin requirements as short stock.',
+ legs:[{pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Upside risk'},
+       {pos:'Long',type:'Put',strike:'$100',exp:'30d',prem:'+$5.00',note:'Downside profit'}],
+ stats:{maxP:'$100.00',maxL:'Unlimited',be:'$100.00',dir:'Bearish ↓'},
+ greeks:{Δ:'-1.0',Γ:'~0',Θ:'~0',V:'~0'},
+ payoff:S=>100-S, range:[55,145]},
+
+// ── ARBITRAGE ─────────────────────────────────────────────────────────────────
+{id:'conversion',name:'Conversion',cat:'Arbitrage',dot:'arb',
+ outlook:'Arbitrage (Riskless)',risk:'Near Riskless',vega:'~0',theta:'~0',
+ desc:'Long stock + long put + short call (same strike and expiration). Exploits put-call parity violations. When properly executed, the position locks in a riskless profit regardless of where the stock moves. The P&L is essentially flat — profit comes from the pricing discrepancy at entry.',
+ use:'Pure arbitrage. Only profitable when options are mispriced relative to put-call parity. Institutional and market-making strategy. Retail traders rarely have an edge here due to transaction costs.',
+ legs:[{pos:'Long',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Stock leg'},
+       {pos:'Long',type:'Put',strike:'$100',exp:'30d',prem:'+$5.00',note:'Put leg'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Call leg (locks in parity)'}],
+ stats:{maxP:'~$0.50',maxL:'~$0.50',be:'N/A',dir:'Neutral (Arbitrage)'},
+ greeks:{Δ:'~0',Γ:'~0',Θ:'~0',V:'~0'},
+ payoff:S=>0.5, range:[70,130],flat:true},
+
+{id:'reversal',name:'Reversal',cat:'Arbitrage',dot:'arb',
+ outlook:'Arbitrage (Riskless)',risk:'Near Riskless',vega:'~0',theta:'~0',
+ desc:'Short stock + short put + long call (same strike and expiration). The mirror image of a Conversion. Also called a Reverse Conversion. Locks in a riskless profit when the synthetic short stock position (short call + long put) overvalues the actual short stock position.',
+ use:'Pure arbitrage — the opposite side of a conversion. When put-call parity implies the synthetic is overpriced vs. the real position. Market makers and institutions use reversals to neutralize conversions done by others.',
+ legs:[{pos:'Short',type:'Stock',strike:'$100',exp:'—',prem:'—',note:'Short stock'},
+       {pos:'Short',type:'Put',strike:'$100',exp:'30d',prem:'-$5.00',note:'Put leg'},
+       {pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Call leg (locks in parity)'}],
+ stats:{maxP:'~$0.50',maxL:'~$0.50',be:'N/A',dir:'Neutral (Arbitrage)'},
+ greeks:{Δ:'~0',Γ:'~0',Θ:'~0',V:'~0'},
+ payoff:S=>-0.5, range:[70,130],flat:true},
+
+{id:'long_box',name:'Long Box Spread',cat:'Arbitrage',dot:'arb',
+ outlook:'Arbitrage (Riskless)',risk:'Near Riskless',vega:'~0',theta:'~0',
+ desc:'Buy a bull call spread and buy a bear put spread on the same strikes and expiration. The position always pays off the difference between the strikes at expiration — making it essentially a zero-risk loan. The value at expiration is always the strike spread width.',
+ use:'Financing strategy. The "box" is worth exactly the spread width at expiry. If you can buy it for less (net debit < spread width), you capture a riskless profit. Used by institutions for cash management and regulatory arbitrage.',
+ legs:[{pos:'Long',type:'Call',strike:'$95',exp:'30d',prem:'+$7.00',note:'Bull call spread (lower)'},
+       {pos:'Short',type:'Call',strike:'$105',exp:'30d',prem:'-$3.00',note:'Bull call spread (upper)'},
+       {pos:'Long',type:'Put',strike:'$105',exp:'30d',prem:'+$7.00',note:'Bear put spread (upper)'},
+       {pos:'Short',type:'Put',strike:'$95',exp:'30d',prem:'-$3.00',note:'Bear put spread (lower)'}],
+ stats:{maxP:'~$2.00',maxL:'~$2.00',be:'N/A',dir:'Neutral (Arbitrage)'},
+ greeks:{Δ:'~0',Γ:'~0',Θ:'~0',V:'~0'},
+ payoff:S=>2.0, range:[70,130],flat:true},
+
+// ── TIME SPREADS ──────────────────────────────────────────────────────────────
+{id:'calendar_debit',name:'Calendar Spread — Debit',cat:'Time Spreads',dot:'time',
+ outlook:'Neutral (Profit from Time Decay)',risk:'Defined Risk',vega:'Long Vega',theta:'Long Theta',
+ desc:'Buy a longer-dated option and sell a shorter-dated option at the same strike. Pay a net debit. At the near-term expiration, the short option expires and the long option retains time value — profit if the stock is near the strike. Sensitive to volatility changes (long vega).',
+ use:'Profit from time decay differential. The near-dated option decays faster. Best when IV is low (long vega benefits from rising IV). Target stocks expected to stay near the strike through near-term expiry.',
+ legs:[{pos:'Long',type:'Call',strike:'$100',exp:'60d',prem:'+$7.00',note:'Long-dated (retain time value)'},
+       {pos:'Short',type:'Call',strike:'$100',exp:'30d',prem:'-$5.00',note:'Short-dated (decays faster)'}],
+ stats:{maxP:'~$3.00',maxL:'-$2.00',be:'~$95 / ~$105',dir:'Neutral (Calendar)'},
+ greeks:{Δ:'~0',Γ:'+',Θ:'+',V:'+'},
+ payoff:S=>3*Math.exp(-Math.pow(S-100,2)/180)-1.2,
+ range:[70,130],timeNote:'Approximate P&L at near-term expiration. Actual P&L depends on IV and remaining time value.'},
+
+{id:'calendar_credit',name:'Calendar Spread — Credit',cat:'Time Spreads',dot:'time',
+ outlook:'Expects Large Move',risk:'Defined Risk',vega:'Short Vega',theta:'Short Theta',
+ desc:'Sell a longer-dated option and buy a shorter-dated option at the same strike. Receive a net credit. Opposite of the debit calendar — profits when the stock moves away from the strike before the long leg expires. Typically a more unusual structure (also called "reverse calendar").',
+ use:'Used when expecting a large move or spike in volatility in the near term. The credit received is the maximum profit if both legs expire worthless at their respective strikes.',
+ legs:[{pos:'Short',type:'Call',strike:'$100',exp:'60d',prem:'-$7.00',note:'Longer-dated (short)'},
+       {pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Shorter-dated (long)'}],
+ stats:{maxP:'~$2.00',maxL:'Variable',be:'~$95 / ~$105',dir:'Volatility (Reverse Cal.)'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'-',V:'-'},
+ payoff:S=>1.2-3*Math.exp(-Math.pow(S-100,2)/180),
+ range:[70,130],timeNote:'Approximate P&L at near-term expiration. Reverse calendar is complex; consult a payoff model for precise values.'},
+
+{id:'diagonal_short_first',name:'Diagonal Spread — Short Leg Expires First',cat:'Time Spreads',dot:'time',
+ outlook:'Moderately Bullish',risk:'Defined Risk',vega:'Long Vega',theta:'Long Theta',
+ desc:'Buy a longer-dated, lower-strike option and sell a shorter-dated, higher-strike option. The short leg expires first. Combines calendar spread time decay with a directional spread. Creates a risk profile similar to a covered call but with a long option instead of stock.',
+ use:'Profit from both the passage of time and a moderate directional move. Often used as a "poor man\'s covered call." Best when IV is low and you expect a gradual move toward the upper strike.',
+ legs:[{pos:'Long',type:'Call',strike:'$95',exp:'60d',prem:'+$9.00',note:'Long-dated, lower strike (LEAPS-like)'},
+       {pos:'Short',type:'Call',strike:'$105',exp:'30d',prem:'-$3.00',note:'Short-dated, higher strike expires first'}],
+ stats:{maxP:'~$3.00',maxL:'-$6.00',be:'~$98',dir:'Moderately Bullish ↑'},
+ greeks:{Δ:'+',Γ:'+',Θ:'+',V:'+'},
+ payoff:S=>2.5*Math.exp(-Math.pow(S-104,2)/220)-0.8,
+ range:[70,130],timeNote:'Approximate P&L at short-leg expiration. Long leg retains time value at that date.'},
+
+{id:'diagonal_long_first',name:'Diagonal Spread — Long Leg Expires First',cat:'Time Spreads',dot:'time',
+ outlook:'Neutral to Moderately Bearish',risk:'Complex Risk',vega:'Mixed',theta:'Mixed',
+ desc:'Buy a shorter-dated option and sell a longer-dated option at a different strike. The long leg expires first. After the long leg expires, you are left naked short the longer-dated option — creating ongoing risk. This is an unusual and complex structure that requires careful management.',
+ use:'Rarely used in isolation. The position flips from a spread to a naked short after the long expires. Used tactically in specific vol trading scenarios. Requires active management and awareness of the post-expiry naked risk.',
+ legs:[{pos:'Long',type:'Call',strike:'$100',exp:'30d',prem:'+$5.00',note:'Shorter-dated, expires first'},
+       {pos:'Short',type:'Call',strike:'$105',exp:'60d',prem:'-$3.50',note:'Longer-dated, outlasts long leg'}],
+ stats:{maxP:'~$1.50',maxL:'Unlimited (post-expiry)',be:'~$102',dir:'Neutral/Complex'},
+ greeks:{Δ:'~0',Γ:'-',Θ:'+',V:'-'},
+ payoff:S=>1.8-2.2*Math.exp(-Math.pow(S-100,2)/300),
+ range:[70,130],timeNote:'P&L before long-leg expiration. After long expires, a naked short call remains — unlimited upside risk.'},
+
+];
+
+// ─── CATEGORIES + SIDEBAR ─────────────────────────────────────────────────────
+const CATS = ['Long Options','Short Options','Stock + Option','Spreads',
+  'Straddles & Strangles','Condors','Butterflies','Collars & Synthetics','Arbitrage','Time Spreads'];
+
+function buildSidebar(){
+  const sb=document.getElementById('sidebar');
+  document.getElementById('stratCount').textContent=STRATEGIES.length+' strategies';
+  CATS.forEach(cat=>{
+    const strats=STRATEGIES.filter(s=>s.cat===cat);
+    if(!strats.length)return;
+    const lbl=document.createElement('div');
+    lbl.className='cat-label';
+    lbl.textContent=cat;
+    sb.appendChild(lbl);
+    strats.forEach(s=>{
+      const btn=document.createElement('button');
+      btn.className='strat-btn';
+      btn.dataset.id=s.id;
+      btn.innerHTML=`<span class="dot dot-${s.dot}"></span>${s.name}`;
+      btn.onclick=()=>selectStrategy(s.id,btn);
+      sb.appendChild(btn);
+    });
+  });
+}
+
+// ─── CHART RENDERER ───────────────────────────────────────────────────────────
+function buildChart(s){
+  const [minS,maxS]=s.range;
+  const N=300;
+  const W=600,H=210;
+  const pad={t:22,r:16,b:38,l:58};
+  const cW=W-pad.l-pad.r, cH=H-pad.t-pad.b;
+
+  const prices=Array.from({length:N},(_,i)=>minS+(i/(N-1))*(maxS-minS));
+  const pnls=prices.map(s.payoff);
+
+  if(s.flat){
+    // For arbitrage flat lines, show a simple flat chart
+    const flatVal=pnls[0];
+    const yMin=-3, yMax=3;
+    const xS=p=>pad.l+((p-minS)/(maxS-minS))*cW;
+    const yP=v=>pad.t+cH-((v-yMin)/(yMax-yMin))*cH;
+    const zY=yP(0);
+    const lineY=yP(flatVal);
+    const svg=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+      <rect x="${pad.l}" y="${pad.t}" width="${cW}" height="${cH}" fill="#0A0E1C" rx="4"/>
+      ${[0].map(v=>`<line x1="${pad.l}" y1="${yP(v)}" x2="${pad.l+cW}" y2="${yP(v)}" stroke="#2A3A5A" stroke-width="1.5"/>`).join('')}
+      <rect x="${pad.l}" y="${Math.min(lineY,zY)}" width="${cW}" height="${Math.abs(lineY-zY)||1}" fill="${flatVal>=0?'rgba(52,211,153,.08)':'rgba(248,113,113,.08)'}"/>
+      <line x1="${pad.l}" y1="${lineY}" x2="${pad.l+cW}" y2="${lineY}" stroke="${flatVal>=0?'#34D399':'#F87171'}" stroke-width="2.5" stroke-dasharray="6,3"/>
+      <line x1="${pad.l}" y1="${zY}" x2="${pad.l+cW}" y2="${zY}" stroke="#3E5272" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t+cH}" stroke="#1C2540" stroke-width="1"/>
+      <line x1="${pad.l}" y1="${pad.t+cH}" x2="${pad.l+cW}" y2="${pad.t+cH}" stroke="#1C2540" stroke-width="1"/>
+      <text x="${pad.l-6}" y="${lineY+4}" text-anchor="end" fill="#34D399" font-size="10">$${flatVal.toFixed(2)}</text>
+      <text x="${pad.l-6}" y="${zY+4}" text-anchor="end" fill="#3E5272" font-size="10">$0</text>
+      <text x="${pad.l+cW/2}" y="${H-4}" text-anchor="middle" fill="#3E5272" font-size="10">Stock Price</text>
+      <text x="${pad.l}" y="${H-4}" text-anchor="start" fill="#3E5272" font-size="9">$${minS}</text>
+      <text x="${pad.l+cW}" y="${H-4}" text-anchor="end" fill="#3E5272" font-size="9">$${maxS}</text>
+      <text x="${pad.l+cW/2}" y="${lineY-8}" text-anchor="middle" fill="${flatVal>=0?'#34D399':'#F87171'}" font-size="10" font-weight="600">Flat P&amp;L — Riskless Arbitrage</text>
+    </svg>`;
+    return svg;
+  }
+
+  const rawMin=Math.min(...pnls), rawMax=Math.max(...pnls);
+  const pRange=rawMax-rawMin||10;
+  const yMin=rawMin-pRange*0.18, yMax=rawMax+pRange*0.18;
+
+  const xS=p=>pad.l+((p-minS)/(maxS-minS))*cW;
+  const yP=v=>pad.t+cH-((v-yMin)/(yMax-yMin))*cH;
+  const zY=yP(0);
+
+  // Grid lines - y axis
+  const step=pRange>30?10:pRange>15?5:pRange>6?2:1;
+  const startV=Math.ceil(yMin/step)*step;
+  const gridVals=[];
+  for(let v=startV;v<=yMax;v+=step) gridVals.push(v);
+
+  // X grid
+  const xStep=(maxS-minS)/6;
+  const xGridVals=[];
+  for(let x=minS;x<=maxS+0.1;x+=xStep) xGridVals.push(Math.round(x));
+
+  // Build polyline points
+  const pts=prices.map((p,i)=>`${xS(p).toFixed(1)},${yP(pnls[i]).toFixed(1)}`);
+
+  // Profit and loss area polygons (closed to zero line)
+  const closedPath=`M ${xS(prices[0])},${Math.max(pad.t,Math.min(pad.t+cH,zY))} `+
+    prices.map((p,i)=>`L ${xS(p)},${Math.max(pad.t,Math.min(pad.t+cH,yP(pnls[i])))}`).join(' ')+
+    ` L ${xS(prices[N-1])},${Math.max(pad.t,Math.min(pad.t+cH,zY))} Z`;
+
+  // Find zero crossings for markers
+  const zeroCrossings=[];
+  for(let i=0;i<N-1;i++){
+    if((pnls[i]<0&&pnls[i+1]>=0)||(pnls[i]>=0&&pnls[i+1]<0)){
+      const t=-pnls[i]/(pnls[i+1]-pnls[i]);
+      const crossS=prices[i]+t*(prices[i+1]-prices[i]);
+      zeroCrossings.push(crossS);
+    }
+  }
+
+  // Max profit / max loss points
+  const maxPnl=Math.max(...pnls), minPnl=Math.min(...pnls);
+  const maxIdx=pnls.indexOf(maxPnl), minIdx=pnls.indexOf(minPnl);
+  const maxStar=prices[maxIdx], minStar=prices[minIdx];
+
+  // S0 marker at $100
+  const S0=100;
+  const S0x=xS(S0), S0y=yP(s.payoff(S0));
+
+  const svg=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+  <defs>
+    <clipPath id="cp-profit-${s.id}">
+      <rect x="${pad.l}" y="${pad.t}" width="${cW}" height="${Math.max(0,zY-pad.t)}"/>
+    </clipPath>
+    <clipPath id="cp-loss-${s.id}">
+      <rect x="${pad.l}" y="${zY}" width="${cW}" height="${Math.max(0,pad.t+cH-zY)}"/>
+    </clipPath>
+    <clipPath id="cp-chart-${s.id}">
+      <rect x="${pad.l}" y="${pad.t}" width="${cW}" height="${cH}"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect x="${pad.l}" y="${pad.t}" width="${cW}" height="${cH}" fill="#090D1C" rx="4"/>
+
+  <!-- Y grid -->
+  ${gridVals.map(v=>`
+    <line x1="${pad.l}" y1="${yP(v).toFixed(1)}" x2="${pad.l+cW}" y2="${yP(v).toFixed(1)}" stroke="#141E34" stroke-width="1"/>
+    <text x="${pad.l-6}" y="${(yP(v)+3.5).toFixed(1)}" text-anchor="end" fill="#2E4060" font-size="9">${v>0?'+':''}${v}</text>
+  `).join('')}
+
+  <!-- X grid -->
+  ${xGridVals.map(x=>`
+    <line x1="${xS(x).toFixed(1)}" y1="${pad.t}" x2="${xS(x).toFixed(1)}" y2="${pad.t+cH}" stroke="#141E34" stroke-width="1"/>
+    <text x="${xS(x).toFixed(1)}" y="${pad.t+cH+14}" text-anchor="middle" fill="#2E4060" font-size="9">$${x}</text>
+  `).join('')}
+
+  <!-- Profit fill -->
+  <path d="${closedPath}" fill="rgba(52,211,153,0.1)" clip-path="url(#cp-profit-${s.id})"/>
+  <!-- Loss fill -->
+  <path d="${closedPath}" fill="rgba(248,113,113,0.1)" clip-path="url(#cp-loss-${s.id})"/>
+
+  <!-- Zero line -->
+  <line x1="${pad.l}" y1="${zY.toFixed(1)}" x2="${pad.l+cW}" y2="${zY.toFixed(1)}" stroke="#2A3850" stroke-width="1.5" stroke-dasharray="4,4"/>
+
+  <!-- Payoff curve -->
+  <polyline points="${pts.join(' ')}" fill="none" stroke="#38BDF8" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round" clip-path="url(#cp-chart-${s.id})"/>
+
+  <!-- Profit portion of curve (green) -->
+  <polyline points="${pts.join(' ')}" fill="none" stroke="#34D399" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round" clip-path="url(#cp-profit-${s.id})"/>
+
+  <!-- Loss portion of curve (red) -->
+  <polyline points="${pts.join(' ')}" fill="none" stroke="#F87171" stroke-width="2.5"
+    stroke-linejoin="round" stroke-linecap="round" clip-path="url(#cp-loss-${s.id})"/>
+
+  <!-- Axes -->
+  <line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${pad.t+cH}" stroke="#1C2540" stroke-width="1.5"/>
+  <line x1="${pad.l}" y1="${pad.t+cH}" x2="${pad.l+cW}" y2="${pad.t+cH}" stroke="#1C2540" stroke-width="1.5"/>
+
+  <!-- Zero crossings (breakeven dots) -->
+  ${zeroCrossings.map(sx=>`
+    <line x1="${xS(sx).toFixed(1)}" y1="${pad.t}" x2="${xS(sx).toFixed(1)}" y2="${pad.t+cH}" stroke="rgba(251,191,36,0.3)" stroke-width="1" stroke-dasharray="3,3"/>
+    <circle cx="${xS(sx).toFixed(1)}" cy="${zY.toFixed(1)}" r="4" fill="#FBBF24" stroke="#090D1C" stroke-width="1.5"/>
+    <text x="${xS(sx).toFixed(1)}" y="${zY+18}" text-anchor="middle" fill="#FBBF24" font-size="9.5" font-weight="600">$${sx.toFixed(1)}</text>
+  `).join('')}
+
+  <!-- Max profit star -->
+  ${Math.abs(maxPnl)<999?`
+    <circle cx="${xS(maxStar).toFixed(1)}" cy="${yP(maxPnl).toFixed(1)}" r="4" fill="#34D399" stroke="#090D1C" stroke-width="1.5"/>
+  `:''}
+
+  <!-- S0 vertical line -->
+  <line x1="${S0x.toFixed(1)}" y1="${pad.t}" x2="${S0x.toFixed(1)}" y2="${pad.t+cH}" stroke="rgba(56,189,248,0.3)" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="${S0x.toFixed(1)}" y="${pad.t-6}" text-anchor="middle" fill="#38BDF8" font-size="9">S₀=$100</text>
+
+  <!-- Axis labels -->
+  <text x="${pad.l+cW/2}" y="${H-2}" text-anchor="middle" fill="#3E5272" font-size="9.5">Stock Price at Expiration ($)</text>
+  <text x="10" y="${pad.t+cH/2}" text-anchor="middle" fill="#3E5272" font-size="9.5" transform="rotate(-90 10 ${pad.t+cH/2})">P&amp;L ($)</text>
+</svg>`;
+  return svg;
+}
+
+// ─── RENDER STRATEGY ──────────────────────────────────────────────────────────
+function outlookBadge(s){
+  const cls=s.dot==='bull'?'b-bull':s.dot==='bear'?'b-bear':s.dot==='vol'?'b-vol':s.dot==='arb'?'b-arb':s.dot==='time'?'b-vol':'b-neut';
+  return `<span class="badge ${cls}">${s.outlook}</span>`;
+}
+function riskBadge(s){
+  return `<span class="badge ${s.risk.includes('Unlimited')?'b-undef':'b-def'}">${s.risk}</span>`;
+}
+function vegaBadge(s){
+  const cls=s.vega.includes('Long')?'b-lv':s.vega.includes('Short')?'b-sv':'b-neut';
+  return `<span class="badge ${cls}">${s.vega}</span>`;
+}
+function thetaBadge(s){
+  const cls=s.theta.includes('Long')?'b-def':s.theta.includes('Short')?'b-undef':'b-neut';
+  return `<span class="badge ${cls}">${s.theta}</span>`;
+}
+function greekColor(v){
+  if(v==='+'||v==='+1.0')return 'gp';
+  if(v==='-'||v==='-1.0')return 'gn';
+  return 'gz';
+}
+
+function renderStrategy(s){
+  const maxValClass=s.stats.maxP==='Unlimited'?'sv-profit':parseFloat(s.stats.maxP)>0?'sv-profit':'sv-loss';
+  const minValClass=s.stats.maxL.includes('Unlimited')?'sv-loss':parseFloat(s.stats.maxL)<0?'sv-loss':'sv-profit';
+
+  return `
+<div class="strat-hdr">
+  <div class="strat-name">${s.name}</div>
+  <div class="badges">
+    ${outlookBadge(s)} ${riskBadge(s)} ${vegaBadge(s)} ${thetaBadge(s)}
+  </div>
+</div>
+
+<div class="chart-card">
+  <div class="chart-hdr">
+    <div class="chart-title">Payoff Diagram — P&amp;L at Expiration (Per Share, Assume 100 Shares)</div>
+    <div class="legend">
+      <div class="leg-item"><div class="leg-line" style="background:#34D399"></div>Profit</div>
+      <div class="leg-item"><div class="leg-line" style="background:#F87171"></div>Loss</div>
+      <div class="leg-item"><span style="color:#FBBF24;font-size:10px">●</span>&nbsp;Breakeven</div>
+    </div>
+  </div>
+  ${buildChart(s)}
+  ${s.timeNote?`<div class="chart-note">⚠ ${s.timeNote}</div>`:''}
+</div>
+
+<div class="stats-row">
+  <div class="stat"><div class="stat-lbl">Max Profit</div><div class="stat-val ${maxValClass}">${s.stats.maxP}</div></div>
+  <div class="stat"><div class="stat-lbl">Max Loss</div><div class="stat-val ${minValClass}">${s.stats.maxL}</div></div>
+  <div class="stat"><div class="stat-lbl">Breakeven</div><div class="stat-val sv-neut">${s.stats.be}</div></div>
+  <div class="stat"><div class="stat-lbl">Direction</div><div class="stat-val sv-accent">${s.stats.dir}</div></div>
+</div>
+
+<div class="grid2">
+  <div class="card"><div class="card-title">Strategy Description</div><div class="card-body">${s.desc}</div></div>
+  <div class="card"><div class="card-title">When to Use</div><div class="card-body">${s.use}</div></div>
+</div>
+
+<div class="legs-wrap">
+  <div class="legs-title">Option Legs — Illustrative Prices (S₀ = $100, 30 DTE, Assumed Inputs)</div>
+  <table>
+    <tr><th>Position</th><th>Type</th><th>Strike</th><th>Expiry</th><th>Premium</th><th>Notes</th></tr>
+    ${s.legs.map(l=>`
+    <tr>
+      <td class="${l.pos==='Long'?'long':'short'}">${l.pos==='Long'?'▲ Long':'▼ Short'}</td>
+      <td>${l.type}</td>
+      <td>${l.strike}</td>
+      <td>${l.exp}</td>
+      <td>${l.prem}</td>
+      <td style="font-family:Inter;font-size:11px;color:#4A6080">${l.note}</td>
+    </tr>`).join('')}
+  </table>
+</div>
+
+<div class="card-title" style="margin-bottom:8px">Greek Exposure</div>
+<div class="greeks-row">
+  ${Object.entries(s.greeks).map(([k,v])=>`<span class="greek ${greekColor(v)}">${k} ${v}</span>`).join('')}
+</div>
+`;
+}
+
+// ─── SELECT STRATEGY ──────────────────────────────────────────────────────────
+let activeBtn=null;
+function selectStrategy(id, btn){
+  const s=STRATEGIES.find(x=>x.id===id);
+  if(!s)return;
+  if(activeBtn){activeBtn.classList.remove('active');}
+  btn.classList.add('active');
+  activeBtn=btn;
+  const content=document.getElementById('content');
+  content.innerHTML=renderStrategy(s);
+  content.scrollTop=0;
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+buildSidebar();
+</script>
+</body>
+</html>

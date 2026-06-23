@@ -1,5 +1,5 @@
 
-import os, json, time, threading, collections, requests, re
+import os, sys, json, time, threading, collections, requests, re
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -14,11 +14,35 @@ import ta
 import yfinance as yf
 import finnhub
 import websocket
-from flask import send_from_directory, jsonify
+from flask import send_from_directory, jsonify, request
 
-# Load .env from ~/TradingSetup/.env.trading
-ENV_PATH = str(Path.home() / "TradingSetup" / ".env.trading")
+# Load .env from ~/Anduril/.env.trading
+ENV_PATH = str(Path.home() / "Anduril" / ".env.trading")
 load_dotenv(ENV_PATH)
+
+ANDURIL_ROOT = Path.home() / "Anduril"
+for _cp in [ANDURIL_ROOT, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent]:
+    _s = str(_cp)
+    if (_cp / "copilot").is_dir() and _s not in sys.path:
+        sys.path.insert(0, _s)
+
+try:
+    import importlib
+    import copilot.runner as _copilot_runner
+    from copilot.runner import WORKFLOWS as COPILOT_WORKFLOWS
+    _COPILOT_OK = True
+except ImportError:
+    _copilot_runner = None
+    _COPILOT_OK = False
+    COPILOT_WORKFLOWS = {}
+
+
+def _copilot_run(workflow, ticker, horizon="swing", use_llm=False):
+    """Reload runner each call so copilot updates apply without restarting the dashboard."""
+    if not _COPILOT_OK:
+        raise RuntimeError("Copilot not installed")
+    importlib.reload(_copilot_runner)
+    return _copilot_runner.run(workflow, ticker, horizon=horizon, use_llm=use_llm)
 
 FINNHUB_KEY    = os.getenv("FINNHUB_API_KEY", "")
 NEWSDATA_KEY   = os.getenv("NEWSDATA_API_KEY", "")
@@ -315,6 +339,15 @@ ANDURIL_ROOT = Path.home() / "Anduril"
 def serve_guide():
     return send_from_directory(str(ANDURIL_ROOT), "guide.html")
 
+@app.server.route("/options-guide")
+@app.server.route("/options-guide/")
+def serve_options_guide():
+    for directory in (ANDURIL_ROOT, Path(__file__).resolve().parent):
+        path = directory / "options_guide.html"
+        if path.exists():
+            return send_from_directory(str(directory), "options_guide.html")
+    return ("Options guide not found", 404)
+
 @app.server.route("/logo")
 @app.server.route("/logo.png")
 def serve_logo():
@@ -346,6 +379,24 @@ def api_options(ticker):
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+@app.server.route("/api/copilot/run", methods=["POST"])
+def api_copilot_run():
+    if not _COPILOT_OK:
+        return jsonify({"error": "Copilot module not installed. Copy copilot/ to ~/Anduril/"}), 503
+    try:
+        body = request.get_json(force=True) or {}
+        workflow = body.get("workflow", "thesis_timing")
+        ticker = (body.get("ticker") or "").strip().upper()
+        horizon = body.get("horizon", "swing")
+        use_llm = bool(body.get("use_llm", False))
+        if not ticker:
+            return jsonify({"error": "ticker required"}), 400
+        result = _copilot_run(workflow, ticker, horizon=horizon, use_llm=use_llm)
+        return jsonify({"markdown": result.get("markdown"), "llm_used": result.get("llm_used"),
+                        "llm_error": result.get("llm_error"), "timing": (result.get("context") or {}).get("timing")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 SIDEBAR = dbc.Nav([
     html.Div([
         html.Img(src="/logo",
@@ -365,10 +416,73 @@ SIDEBAR = dbc.Nav([
     dbc.NavLink("Live News",   href="/live-news",   active="exact", className="py-2"),
     dbc.NavLink("Financials",  href="/financials",  active="exact", className="py-2"),
     dbc.NavLink("Options",     href="/options",     active="exact", className="py-2"),
+    dbc.NavLink("Opt Guide",   href="/options-guide", external_link=True, className="py-2"),
+    dbc.NavLink("Copilot",     href="/copilot",     active="exact", className="py-2"),
     dbc.NavLink("Guide",       href="/guide",       external_link=True, className="py-2"),
 ], vertical=True, pills=True,
    style={"width":"185px","minHeight":"100vh","background":"#251f45",
           "position":"fixed","top":0,"left":0,"zIndex":100,"borderRight":"1px solid #222"})
+
+def copilot_page():
+    wf_opts = [{"label": v["title"], "value": k} for k, v in COPILOT_WORKFLOWS.items()] if _COPILOT_OK else []
+    return html.Div([
+        html.H4("Research Copilot", className="text-warning mb-1"),
+        html.Small(
+            "Each workflow uses a different template. Analyze = instant rules; Enhance with AI = LM Studio narrative for that playbook.",
+            className="d-block mb-3", style={"fontSize": "11px", "color": "#d8d2f0"}),
+        dbc.Alert(
+            "Not investment advice. Timing signals are heuristic — verify before trading.",
+            color="secondary", className="py-2 copilot-disclaimer", style={"fontSize": "11px"}),
+        dbc.Row([
+            col(dbc.Input(id="cp-ticker", placeholder="Ticker e.g. NVDA", className="bg-dark text-light border-secondary"), 2),
+            col(dcc.Dropdown(id="cp-horizon", options=[
+                {"label": "Day trade", "value": "day"},
+                {"label": "Swing (weeks)", "value": "swing"},
+                {"label": "Long-term (months)", "value": "long"},
+            ], value="swing", clearable=False, className="bg-dark"), 2),
+            col(dcc.Dropdown(id="cp-workflow", options=wf_opts or [{"label": "Thesis & Timing", "value": "thesis_timing"}],
+                             value="thesis_timing", clearable=False), 3),
+            col(dbc.Button("Analyze", id="cp-run", color="warning", size="sm"), "auto"),
+            col(dbc.Button("Enhance with AI", id="cp-llm", color="secondary", size="sm", outline=True), "auto"),
+        ], className="mb-3 g-2 align-items-center"),
+        html.Span(id="cp-status", style={"fontSize": "11px", "color": "#d8d2f0"}),
+        dcc.Loading(
+            dcc.Markdown(id="cp-output", className="copilot-markdown", style={"background": "#12102a", "padding": "16px",
+                "borderRadius": "8px", "minHeight": "200px", "fontSize": "13px", "color": "#f0ecff"}),
+            type="circle", color="#e8621a"),
+    ], className="copilot-page")
+
+@app.callback(
+    Output("cp-output", "children"), Output("cp-status", "children"),
+    Input("cp-run", "n_clicks"), Input("cp-llm", "n_clicks"),
+    State("cp-ticker", "value"), State("cp-horizon", "value"), State("cp-workflow", "value"),
+    prevent_initial_call=True)
+def update_copilot(n_run, n_llm, ticker, horizon, workflow):
+    if not _COPILOT_OK:
+        return "Copilot not installed.", "Missing ~/Anduril/copilot/"
+    ctx = callback_context
+    if not ctx.triggered:
+        return no_update, no_update
+    use_llm = ctx.triggered[0]["prop_id"].startswith("cp-llm")
+    ticker = (ticker or "").strip().upper()
+    if not ticker:
+        return "Enter a ticker.", ""
+    wf = workflow or "thesis_timing"
+    wf_title = (COPILOT_WORKFLOWS.get(wf) or {}).get("title", wf)
+    try:
+        r = _copilot_run(
+            wf,
+            ticker,
+            horizon=horizon or "swing",
+            use_llm=use_llm,
+        )
+        md = r.get("markdown") or ""
+        status = f"{ticker} | {wf_title} | {horizon} | {'AI enhanced' if r.get('llm_used') else 'Rule-based'}"
+        if r.get("llm_error"):
+            status += f" | LLM: {r['llm_error']}"
+        return md, status
+    except Exception as e:
+        return f"Error: {e}", "Failed"
 
 app.layout = html.Div([
     dcc.Location(id="url"),
@@ -385,14 +499,19 @@ app.layout = html.Div([
 
 @app.callback(Output("page-content","children"), Input("url","pathname"))
 def route(path):
+    if path:
+        path = path.split("?")[0].rstrip("/").lower() or "/"
+    else:
+        path = "/"
     p = {"/conviction":conviction_page,
          "/chart":chart_page,"/level2":level2_page,
          "/screener":screener_page,"/news":news_page,
-         "/live-news":live_news_page,"/financials":fin_page,"/options":options_page}
+         "/live-news":live_news_page,"/financials":fin_page,"/options":options_page,
+         "/copilot":copilot_page}
     return p.get(path, watchlist_page)()
 
 app.clientside_callback(
-    "function(n){if(document.getElementById('anduril-css'))return window.dash_clientside.no_update;var s=document.createElement('style');s.id='anduril-css';s.innerHTML='body{font-family:\'Syne\',\'Segoe UI\',system-ui,sans-serif!important;background:#12102a!important}.nav-pills .nav-link{color:#a09ac8!important;font-size:12px;border-radius:6px;padding:8px 14px}.nav-pills .nav-link.active{background:linear-gradient(135deg,#e8621a22,#7c3aed22)!important;color:#e8621a!important;border-left:2px solid #e8621a!important}.nav-pills .nav-link:hover{background:#251f45!important;color:#e8e4f0!important}.text-warning{color:#e8621a!important}.text-muted{color:#8b7fbf!important}.border-warning{border-color:#e8621a!important}.border-secondary{border-color:#3d3470!important}.bg-dark{background:#1c1838!important}.text-light{color:#e8e4f0!important}.btn-warning{background:linear-gradient(135deg,#e8621a,#c94a0a)!important;border-color:#e8621a!important;color:#fff!important}.btn-secondary{background:#251f45!important;border-color:#3d3470!important;color:#a09ac8!important}.Select-control,.Select-menu-outer{background:#251f45!important;border-color:#3d3470!important}.Select-value-label,.Select-placeholder,.Select-option{color:#e8e4f0!important}.Select-option:hover,.Select-option.is-focused{background:#3d3470!important}.form-control,input{background:#1c1838!important;border-color:#3d3470!important;color:#e8e4f0!important}.form-control:focus{border-color:#e8621a!important;box-shadow:0 0 0 2px rgba(232,98,26,0.2)!important}.nav-tabs .nav-link{border-color:#3d3470!important;color:#a09ac8!important}.nav-tabs .nav-link.active{background:#251f45!important;color:#e8621a!important}::-webkit-scrollbar{width:6px;height:6px;background:#12102a}::-webkit-scrollbar-thumb{background:#3d3470;border-radius:3px}.js-plotly-plot .modebar-btn.active,.js-plotly-plot .modebar-btn--active{background:transparent!important;color:#8b7fbf!important}.js-plotly-plot .modebar-btn:hover{background:rgba(107,95,160,.35)!important;color:#e8e4f0!important}.js-plotly-plot .modebar-group{background:transparent!important}';document.head.appendChild(s);return window.dash_clientside.no_update;}",
+    "function(n){if(document.getElementById('anduril-css'))return window.dash_clientside.no_update;var s=document.createElement('style');s.id='anduril-css';s.innerHTML='body{font-family:\'Syne\',\'Segoe UI\',system-ui,sans-serif!important;background:#12102a!important}.nav-pills .nav-link{color:#a09ac8!important;font-size:12px;border-radius:6px;padding:8px 14px}.nav-pills .nav-link.active{background:linear-gradient(135deg,#e8621a22,#7c3aed22)!important;color:#e8621a!important;border-left:2px solid #e8621a!important}.nav-pills .nav-link:hover{background:#251f45!important;color:#e8e4f0!important}.text-warning{color:#e8621a!important}.text-muted{color:#8b7fbf!important}.border-warning{border-color:#e8621a!important}.border-secondary{border-color:#3d3470!important}.bg-dark{background:#1c1838!important}.text-light{color:#e8e4f0!important}.btn-warning{background:linear-gradient(135deg,#e8621a,#c94a0a)!important;border-color:#e8621a!important;color:#fff!important}.btn-secondary{background:#251f45!important;border-color:#3d3470!important;color:#a09ac8!important}.Select-control,.Select-menu-outer{background:#251f45!important;border-color:#3d3470!important}.Select-value-label,.Select-placeholder,.Select-option{color:#e8e4f0!important}.Select-option:hover,.Select-option.is-focused{background:#3d3470!important}.form-control,input{background:#1c1838!important;border-color:#3d3470!important;color:#e8e4f0!important}.form-control:focus{border-color:#e8621a!important;box-shadow:0 0 0 2px rgba(232,98,26,0.2)!important}.nav-tabs .nav-link{border-color:#3d3470!important;color:#a09ac8!important}.nav-tabs .nav-link.active{background:#251f45!important;color:#e8621a!important}::-webkit-scrollbar{width:6px;height:6px;background:#12102a}::-webkit-scrollbar-thumb{background:#3d3470;border-radius:3px}.js-plotly-plot .modebar-btn{background:transparent!important;color:#8b7fbf!important}.js-plotly-plot .modebar-btn:hover{background:rgba(107,95,160,.35)!important;color:#e8e4f0!important}.js-plotly-plot .modebar-btn.modebar-btn--hover:not(:hover),.js-plotly-plot .modebar-btn.active:not(:hover),.js-plotly-plot .modebar-btn--active:not(:hover){background:transparent!important;color:#8b7fbf!important}.js-plotly-plot .modebar-group{background:transparent!important}.copilot-page .alert-secondary{color:#e8e4f0!important;background:#251f45!important;border-color:#3d3470!important}#cp-output,#cp-output .copilot-markdown,#cp-output p,#cp-output li,#cp-output td,#cp-output th,#cp-output blockquote{color:#f0ecff!important}#cp-output h1,#cp-output h2,#cp-output h3,#cp-output h4,#cp-output h5,#cp-output h6{color:#ffffff!important}#cp-output strong,#cp-output b{color:#ffffff!important;font-weight:600}#cp-output code{background:#1c1838!important;color:#f5d0a8!important;padding:1px 4px;border-radius:3px}#cp-output pre{background:#1c1838!important;color:#f0ecff!important;border:1px solid #3d3470;padding:10px;border-radius:6px}#cp-output a{color:#e8621a!important}#cp-output hr{border-color:#3d3470!important}';document.head.appendChild(s);function cleanPlotlyHover(){document.querySelectorAll(\'.modebar-btn.modebar-btn--hover\').forEach(function(b){if(!b.matches(\':hover\')){b.classList.remove(\'modebar-btn--hover\');b.style.removeProperty(\'background\');b.style.removeProperty(\'background-color\');}});document.querySelectorAll(\'.rangeselector\').forEach(function(group){var btns=group.querySelectorAll(\'g.button\');var dark=[];btns.forEach(function(btn){var rect=btn.querySelector(\'rect.selector-rect\');if(!rect)return;var f=(rect.getAttribute(\'fill\')||\'\').toLowerCase();if(f.indexOf(\'37, 31, 69\')>=0||f.indexOf(\'251f45\')>=0)dark.push(btn);});btns.forEach(function(btn){if(btn.matches(\':hover\'))return;var rect=btn.querySelector(\'rect.selector-rect\');if(!rect)return;if(dark.length===1&&dark[0]===btn){rect.setAttribute(\'fill\',\'#251f45\');return;}rect.setAttribute(\'fill\',\'#3d3470\');});});}document.addEventListener(\'mouseout\',cleanPlotlyHover,true);document.addEventListener(\'mousemove\',cleanPlotlyHover,true);return window.dash_clientside.no_update;}",
     Output("_css-inject","data"),Input("_css-inject","data"),prevent_initial_call=False
 )
 
@@ -1560,7 +1679,7 @@ def update_chart(ticker, interval, period, inds, clickdata, mode, clear_clicks, 
         xaxis_kw = dict(
             rangeselector=dict(
                 buttons=range_btns,
-                bgcolor="#251f45", activecolor="#e8621a",
+                bgcolor="#3d3470", activecolor="#251f45",
                 font=dict(color="#e8e4f0", size=10)),
             row=1, col=1)
         if interval in INTRADAY_INTERVALS:
@@ -3042,5 +3161,6 @@ def update_conviction(n,active_tab,ticker):
 
 if __name__ == "__main__":
     print("\\n  Trading Dashboard starting...")
+    print(f"  Copilot module: {'OK' if _COPILOT_OK else 'NOT FOUND — check ~/Anduril/copilot/'}")
     print("  Open your browser at:  http://127.0.0.1:8050\\n")
     app.run(debug=False, host="127.0.0.1", port=8050)
