@@ -123,6 +123,9 @@ class RiskEngine:
             raise RefuseToArm("live trading requires LIVE_TRADING_CONFIRMED=1")
         self._armed = True
 
+    def disarm(self) -> None:
+        self._armed = False
+
     def reconcile(self) -> None:
         if not self.broker.connected:
             raise TradingHalted("cannot reconcile while disconnected")

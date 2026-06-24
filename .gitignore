@@ -2,7 +2,9 @@
 .env
 .env.*
 !.env.trading.example
+!.env.broker.example
 .env.trading
+.env.broker
 *.pem
 *.key
 credentials.json
@@ -40,3 +42,7 @@ TradingSetup/
 
 # Logs
 *.log
+
+# Official TWS API download (install via scripts/install_ibapi.sh)
+vendor/twsapi/
+vendor/twsapi_macunix.zip
