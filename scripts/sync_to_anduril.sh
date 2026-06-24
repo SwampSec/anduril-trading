@@ -28,56 +28,26 @@ if [[ -x "${INSTALL_ROOT}/venv/bin/pip" ]]; then
   echo "  ✓ pip deps (dashboard)"
 fi
 
-cat > "${INSTALL_ROOT}/launch.sh" <<LAUNCH
-#!/usr/bin/env bash
-set -euo pipefail
-INSTALL_ROOT="${INSTALL_ROOT}"
-REPO_ROOT="${ROOT}"
-source "\${INSTALL_ROOT}/venv/bin/activate"
-
-export ANDURIL_API_BASE="\${ANDURIL_API_BASE:-http://127.0.0.1:9001}"
-
-if ! curl -sf "\${ANDURIL_API_BASE}/health" >/dev/null 2>&1; then
-  echo "Starting trading API from \${REPO_ROOT}..."
-  if [[ -f "\${REPO_ROOT}/.env.broker" ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "\${REPO_ROOT}/.env.broker"
-    set +a
-  fi
-  if [[ -x "\${REPO_ROOT}/.venv/bin/python" ]]; then
-    (cd "\${REPO_ROOT}" && "\${REPO_ROOT}/.venv/bin/python" -m uvicorn api.main:app --host "\${API_HOST:-127.0.0.1}" --port "\${API_PORT:-9001}" &) 
-  else
-    echo "  ⚠ API venv missing at \${REPO_ROOT}/.venv — run: cd \${REPO_ROOT} && python3 -m venv .venv && pip install -r requirements.txt"
-  fi
-  sleep 2
-fi
-
-echo ""
-echo "  Andúril Trading Suite"
-echo "  Dashboard  →  http://127.0.0.1:8050"
-echo "  Bot API    →  \${ANDURIL_API_BASE}"
-echo "  Trades     →  http://127.0.0.1:8050/trades"
-echo "  Press Ctrl+C to stop dashboard (API keeps running in background)"
-echo ""
-
-python "\${INSTALL_ROOT}/dashboard/app.py" &
-dash_pid=\$!
-for _ in \$(seq 1 30); do
-  if curl -sf "http://127.0.0.1:8050/" >/dev/null 2>&1; then
-    open "http://127.0.0.1:8050/trades" 2>/dev/null || true
-    break
-  fi
-  sleep 0.5
-done
-
-wait "\${dash_pid}"
-LAUNCH
+cp "${ROOT}/scripts/launch_anduril.sh" "${INSTALL_ROOT}/launch.sh"
 chmod +x "${INSTALL_ROOT}/launch.sh"
+echo "  ✓ launch.sh"
 
 if [[ -f "${INSTALL_ROOT}/Anduril Trading.command" ]]; then
-  cp "${INSTALL_ROOT}/launch.sh" "${INSTALL_ROOT}/Anduril Trading.command"
+  cat > "${INSTALL_ROOT}/Anduril Trading.command" <<'CMD'
+#!/usr/bin/env bash
+exec bash "$HOME/Anduril/launch.sh"
+CMD
   chmod +x "${INSTALL_ROOT}/Anduril Trading.command"
+fi
+
+DESKTOP_CMD="${HOME}/Desktop/Anduril Trading.command"
+if [[ -d "${HOME}/Desktop" ]]; then
+  cat > "${DESKTOP_CMD}" <<'CMD'
+#!/usr/bin/env bash
+exec bash "$HOME/Anduril/launch.sh"
+CMD
+  chmod +x "${DESKTOP_CMD}"
+  echo "  ✓ Desktop/Anduril Trading.command"
 fi
 
 echo ""
