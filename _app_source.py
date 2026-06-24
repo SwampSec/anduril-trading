@@ -450,6 +450,7 @@ SIDEBAR = dbc.Nav([
     dbc.NavLink("Opt Guide",   href="/options-guide", external_link=True, className="py-2"),
     dbc.NavLink("Copilot",     href="/copilot",     active="exact", className="py-2"),
     dbc.NavLink("Bot Control", href="/bot",         active="exact", className="py-2"),
+    dbc.NavLink("Trades",      href="/trades",      active="exact", className="py-2"),
     dbc.NavLink("Guide",       href="/guide",       external_link=True, className="py-2"),
 ], vertical=True, pills=True,
    style={"width":"185px","minHeight":"100vh","background":"#251f45",
@@ -704,6 +705,273 @@ def update_bot(_tick, n_conn, n_disc, n_ref, n_sync, n_rec, n_arm, n_dis, n_an, 
 
     return cards, orders_el, audit_txt, msg
 
+def _trades_symbols(summary_data, history_data):
+    syms = []
+    for p in (summary_data or {}).get("positions") or []:
+        s = (p.get("symbol") or "").upper()
+        if s and float(p.get("net_shares") or 0) != 0:
+            syms.append(s)
+    for r in (history_data or {}).get("records") or []:
+        s = (r.get("symbol") or "").upper()
+        if s and s not in syms:
+            syms.append(s)
+    return syms or ["SPY"]
+
+def _trades_fills_for_symbol(history_data, symbol):
+    sym = symbol.upper()
+    fills = []
+    for r in (history_data or {}).get("records") or []:
+        if (r.get("symbol") or "").upper() != sym:
+            continue
+        if r.get("event") not in {"fill", "order"}:
+            continue
+        price = r.get("fill_price") or r.get("avg_fill_price") or r.get("limit_price") or r.get("price")
+        qty = r.get("shares") or r.get("filled_qty") or r.get("quantity")
+        if not price or not qty or float(qty or 0) <= 0:
+            continue
+        fills.append({
+            "ts": r.get("time") or r.get("ts"),
+            "side": (r.get("side") or "").upper(),
+            "qty": float(qty),
+            "price": float(price),
+            "status": r.get("status", ""),
+            "event": r.get("event"),
+        })
+    return fills
+
+def _build_trades_chart(symbol, range_key, fills):
+    period_map = {"1D": ("1d", "5m"), "1W": ("5d", "30m"), "1M": ("1mo", "1d"), "3M": ("3mo", "1d")}
+    period, interval = period_map.get(range_key, ("1mo", "1d"))
+    fig = go.Figure()
+    try:
+        hist = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
+        if not hist.empty:
+            fig.add_trace(go.Scatter(
+                x=hist.index, y=hist["Close"], mode="lines", name=symbol,
+                line=dict(color="#2dc653", width=2.2),
+                fill="tozeroy", fillcolor="rgba(45,198,83,0.10)",
+            ))
+    except Exception:
+        pass
+
+    buy_x, buy_y, buy_txt = [], [], []
+    sell_x, sell_y, sell_txt = [], [], []
+    for f in fills:
+        ts = f.get("ts")
+        if not ts:
+            continue
+        try:
+            x = pd.to_datetime(ts)
+        except Exception:
+            continue
+        side = f.get("side", "")
+        price = f.get("price", 0)
+        qty = f.get("qty", 0)
+        label = f"{side} {qty:g} @ ${price:,.2f}"
+        if side == "BUY":
+            buy_x.append(x); buy_y.append(price); buy_txt.append(label)
+        elif side == "SELL":
+            sell_x.append(x); sell_y.append(price); sell_txt.append(label)
+
+    if buy_x:
+        fig.add_trace(go.Scatter(
+            x=buy_x, y=buy_y, mode="markers", name="Buy",
+            marker=dict(symbol="triangle-up", size=11, color="#2dc653", line=dict(width=1, color="#0d3d1c")),
+            text=buy_txt, hovertemplate="%{text}<extra></extra>",
+        ))
+    if sell_x:
+        fig.add_trace(go.Scatter(
+            x=sell_x, y=sell_y, mode="markers", name="Sell",
+            marker=dict(symbol="triangle-down", size=11, color="#e63946", line=dict(width=1, color="#4a1018")),
+            text=sell_txt, hovertemplate="%{text}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        height=240, margin=dict(l=8, r=8, t=8, b=8),
+        paper_bgcolor="#12102a", plot_bgcolor="#12102a",
+        font=dict(color="#a09ac8", size=11),
+        xaxis=dict(showgrid=False, zeroline=False, color="#554880"),
+        yaxis=dict(showgrid=True, gridcolor="#1e1e2e", zeroline=False, color="#554880", tickprefix="$"),
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=10)),
+        hovermode="x unified",
+    )
+    return fig
+
+def _trades_header(symbol, summary_data, quote_data, yf_info):
+    pos = None
+    for p in (summary_data or {}).get("positions") or []:
+        if (p.get("symbol") or "").upper() == symbol.upper():
+            pos = p
+            break
+    net = float(pos.get("net_shares") or 0) if pos else 0
+    avg = float(pos.get("avg_cost") or 0) if pos and pos.get("avg_cost") else 0
+    last = None
+    chg_pct = None
+    if quote_data and quote_data.get("trade_price"):
+        last = float(quote_data["trade_price"])
+    elif yf_info:
+        last = yf_info.get("last")
+        chg_pct = yf_info.get("chg_pct")
+    if last is None:
+        try:
+            t = yf.Ticker(symbol)
+            fi = t.fast_info
+            last = float(fi.get("last_price") or fi.get("regular_market_price") or 0) or None
+            chg_pct = float(fi.get("regular_market_change_percent") or 0)
+        except Exception:
+            last = None
+    upnl = (last - avg) * net if last and avg and net else None
+    upnl_pct = ((last / avg) - 1) * 100 if last and avg and avg > 0 else None
+    chg_color = "#2dc653" if (chg_pct or 0) >= 0 else "#e63946"
+    upnl_color = "#2dc653" if (upnl or 0) >= 0 else "#e63946"
+
+    return html.Div([
+        html.Div([
+            html.H3(symbol, style={"color":"#e8e4f0","fontWeight":"700","marginBottom":"2px"}),
+            html.Div([
+                html.Span(fusd(last) if last else "—", style={"fontSize":"28px","fontWeight":"600","color":"#e8e4f0"}),
+                html.Span(
+                    f"  {chg_pct:+.2f}%" if chg_pct is not None else "",
+                    style={"fontSize":"14px","color":chg_color,"marginLeft":"8px"},
+                ) if chg_pct is not None else None,
+            ]),
+            html.Div([
+                html.Span(f"{net:g} shares" if net else "No position", style={"color":"#8b7fbf","fontSize":"12px"}),
+                html.Span(f"  ·  avg {fusd(avg)}" if avg else "", style={"color":"#8b7fbf","fontSize":"12px"}),
+            ], style={"marginTop":"4px"}),
+            html.Div(
+                f"Unrealized {fsigned(upnl)} ({upnl_pct:+.2f}%)" if upnl is not None and upnl_pct is not None else "",
+                style={"color":upnl_color,"fontSize":"13px","marginTop":"6px","fontWeight":"500"},
+            ) if upnl is not None else None,
+        ], style={"background":"#1c1838","border":"1px solid #3d3470","borderRadius":"10px","padding":"16px 18px"}),
+    ], style={"marginBottom":"14px"})
+
+def _trades_activity(symbol, history_data, open_data):
+    sym = symbol.upper()
+    rows = []
+    for r in reversed((history_data or {}).get("records") or []):
+        if (r.get("symbol") or "").upper() != sym:
+            continue
+        side = (r.get("side") or "").upper()
+        qty = r.get("shares") or r.get("filled_qty") or r.get("quantity") or ""
+        price = r.get("fill_price") or r.get("avg_fill_price") or r.get("limit_price") or r.get("price") or ""
+        event = r.get("event", "")
+        status = r.get("status") or event
+        ts = (r.get("ts") or "")[:19].replace("T", " ")
+        bc = "#2dc653" if side == "BUY" else "#e63946" if side == "SELL" else "#e8621a"
+        rows.append(html.Div([
+            html.Div([
+                html.Span("▲ " if side == "BUY" else "▼ " if side == "SELL" else "• ", style={"color":bc,"fontWeight":"700"}),
+                html.Span(f"{side or event} {qty} {sym}", style={"color":"#e8e4f0","fontSize":"13px","fontWeight":"500"}),
+            ]),
+            html.Div([
+                html.Span(ts, style={"color":"#554880","fontSize":"10px","marginRight":"10px"}),
+                html.Span(fusd(price) if price else "", style={"color":"#a09ac8","fontSize":"11px"}),
+                html.Span(f"  ·  {status}", style={"color":"#6b5fa0","fontSize":"10px","marginLeft":"6px"}),
+            ], style={"marginTop":"2px"}),
+        ], style={"borderLeft":f"3px solid {bc}","padding":"10px 12px","marginBottom":"8px",
+                  "background":"#1c1838","borderRadius":"0 8px 8px 0"}))
+
+    open_rows = [o for o in ((open_data or {}).get("orders") or []) if (o.get("symbol") or "").upper() == sym]
+    for o in open_rows:
+        rows.insert(0, html.Div([
+            html.Div([
+                html.Span("◌ ", style={"color":"#e8621a"}),
+                html.Span(f"Open {o.get('side','')} {o.get('quantity','')} {sym}", style={"color":"#e8e4f0","fontSize":"13px"}),
+            ]),
+            html.Div(f"Limit {fusd(o.get('limit_price'))}  ·  {o.get('status','')}", style={"color":"#6b5fa0","fontSize":"10px","marginTop":"2px"}),
+        ], style={"borderLeft":"3px solid #e8621a","padding":"10px 12px","marginBottom":"8px",
+                  "background":"#251f45","borderRadius":"0 8px 8px 0"}))
+
+    if not rows:
+        return html.P("No trades for this symbol yet. Sync from Bot Control or POST /orders/sync.", style={"color":"#6b5fa0","fontSize":"12px"})
+    return html.Div(rows)
+
+def trades_page():
+    return html.Div([
+        html.H4("Trades", className="text-warning mb-1"),
+        html.Small(
+            "Robinhood-style activity from the Anduril API journal. Sync pulls fills from IBKR.",
+            className="d-block mb-3", style={"fontSize":"11px","color":"#d8d2f0"}),
+        dbc.Row([
+            col(dcc.Dropdown(
+                id="tr-symbol", options=[{"label":"SPY","value":"SPY"}], value="SPY",
+                clearable=False, className="bg-dark"), 2),
+            col(dcc.RadioItems(
+                id="tr-range",
+                options=[
+                    {"label":"1D","value":"1D"},{"label":"1W","value":"1W"},
+                    {"label":"1M","value":"1M"},{"label":"3M","value":"3M"},
+                ],
+                value="1M", inline=True,
+                inputStyle={"marginRight":"4px"},
+                labelStyle={"marginRight":"12px","fontSize":"11px","color":"#a09ac8"},
+            ), 5),
+            col(dbc.Button("Sync IBKR", id="tr-sync", color="secondary", size="sm", outline=True), "auto"),
+            col(dbc.Button("Refresh", id="tr-refresh", color="warning", size="sm"), "auto"),
+        ], className="mb-3 g-2 align-items-center"),
+        html.Span(id="tr-status", style={"fontSize":"11px","color":"#6b5fa0"}),
+        dcc.Loading(html.Div(id="tr-body"), type="circle", color="#e8621a"),
+    ], className="trades-page")
+
+@app.callback(
+    Output("tr-body", "children"),
+    Output("tr-symbol", "options"),
+    Output("tr-status", "children"),
+    Input("tr-tick", "n_intervals"),
+    Input("tr-sync", "n_clicks"),
+    Input("tr-refresh", "n_clicks"),
+    Input("tr-symbol", "value"),
+    Input("tr-range", "value"),
+    prevent_initial_call=False,
+)
+def update_trades_page(_tick, _sync, _refresh, symbol, range_key):
+    ctx = callback_context
+    triggered = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else "tr-tick"
+    msg = ""
+
+    if triggered == "tr-sync":
+        r = _api_request("POST", "/orders/sync")
+        msg = "Synced fills from IBKR" if r.get("ok") else f"Sync failed: {r.get('error')}"
+    elif triggered == "tr-refresh":
+        msg = "Refreshed"
+    elif triggered == "tr-tick":
+        msg = "Live"
+
+    symbol = (symbol or "SPY").strip().upper()
+    hist_r = _api_request("GET", "/orders", params={"limit": 100})
+    sum_r = _api_request("GET", "/orders/summary")
+    open_r = _api_request("GET", "/orders/open")
+    quote_r = _api_request("GET", "/ibkr/quote", params={"symbol": symbol})
+
+    history = hist_r.get("data") if hist_r.get("ok") else None
+    summary = sum_r.get("data") if sum_r.get("ok") else None
+    open_data = open_r.get("data") if open_r.get("ok") else None
+    quote = quote_r.get("data") if quote_r.get("ok") else None
+
+    sym_opts = [{"label": s, "value": s} for s in _trades_symbols(summary, history)]
+    if symbol not in [o["value"] for o in sym_opts]:
+        sym_opts.insert(0, {"label": symbol, "value": symbol})
+
+    fills = _trades_fills_for_symbol(history, symbol)
+    fig = _build_trades_chart(symbol, range_key or "1M", fills)
+    header = _trades_header(symbol, summary, quote, None)
+    chart_card = html.Div(
+        dcc.Graph(figure=fig, config={"displayModeBar": False}, style={"height": "240px"}),
+        style={"background":"#1c1838","border":"1px solid #3d3470","borderRadius":"10px",
+               "padding":"6px","marginBottom":"14px"},
+    )
+    activity = html.Div([
+        html.H6("Activity", style={"color":"#e8621a","marginBottom":"10px","fontSize":"12px",
+                                    "letterSpacing":"0.06em","textTransform":"uppercase"}),
+        _trades_activity(symbol, history, open_data),
+    ])
+
+    body = html.Div([header, chart_card, activity])
+    if not msg:
+        msg = f"{symbol} · {range_key or '1M'}"
+    return body, sym_opts, msg
+
 app.layout = html.Div([
     dcc.Location(id="url"),
     dcc.Store(id="_css-inject",data=1),
@@ -712,6 +980,7 @@ app.layout = html.Div([
     dcc.Interval(id="wl-tick",  interval=30000, n_intervals=0, disabled=True),
     dcc.Interval(id="l2-tick",  interval=2000,  n_intervals=0, disabled=True),
     dcc.Interval(id="bot-tick", interval=10000, n_intervals=0, disabled=True),
+    dcc.Interval(id="tr-tick", interval=15000, n_intervals=0, disabled=True),
     SIDEBAR,
     html.Div(id="page-content",
         style={"marginLeft":"195px","padding":"20px","minHeight":"100vh",
@@ -728,7 +997,7 @@ def route(path):
          "/chart":chart_page,"/level2":level2_page,
          "/screener":screener_page,"/news":news_page,
          "/live-news":live_news_page,"/financials":fin_page,"/options":options_page,
-         "/copilot":copilot_page,"/bot":bot_page}
+         "/copilot":copilot_page,"/bot":bot_page,"/trades":trades_page}
     return p.get(path, watchlist_page)()
 
 app.clientside_callback(
@@ -766,6 +1035,9 @@ def control_l2_poll(pathname): return pathname != "/level2"
 
 @app.callback(Output("bot-tick","disabled"), Input("url","pathname"))
 def control_bot_poll(pathname): return pathname != "/bot"
+
+@app.callback(Output("tr-tick","disabled"), Input("url","pathname"))
+def control_tr_poll(pathname): return pathname != "/trades"
 
 # ── Earnings calendar ──────────────────────────────────────────
 @app.callback(Output("nw-earnings-cal","children"),
