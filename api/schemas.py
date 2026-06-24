@@ -24,6 +24,7 @@ class IBKRStatusResponse(BaseModel):
 class BotStatusResponse(BaseModel):
     enabled: bool
     armed: bool
+    loop_running: bool
     kill_switch: bool
     read_only: bool
     connected: bool
@@ -48,11 +49,13 @@ class NewsOverlayResponse(BaseModel):
 class AnalyzeResponse(BaseModel):
     decision: DecisionResponse
     news: NewsOverlayResponse | None = None
+    price_used: Decimal
 
 
 class RunOnceResponse(BaseModel):
     decision: DecisionResponse
     news: NewsOverlayResponse | None = None
+    price_used: Decimal
     submitted: bool
     order_result: dict[str, Any] | None = None
     message: str

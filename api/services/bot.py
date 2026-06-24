@@ -19,6 +19,7 @@ from risk.guardrails import RefuseToArm, RiskEngine
 class BotStatus:
     enabled: bool
     armed: bool
+    loop_running: bool
     kill_switch: bool
     read_only: bool
     connected: bool
@@ -30,6 +31,7 @@ class BotStatus:
 class RunResult:
     decision: Decision
     news: NewsSignal | None
+    price_used: Decimal
     submitted: bool
     order_result: dict[str, Any] | None
     message: str
@@ -48,6 +50,13 @@ class BotService:
         self.risk = risk
         self.decision_engine = DecisionEngine(broker=broker, risk=risk)
         self.llm = llm
+        self._loop_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
+        self._last_error: str | None = None
+
+    @property
+    def loop_running(self) -> bool:
+        return self._loop_task is not None and not self._loop_task.done()
 
     def status(self) -> BotStatus:
         import os
@@ -62,6 +71,7 @@ class BotService:
         return BotStatus(
             enabled=self.settings.bot_enabled,
             armed=self.risk.is_armed,
+            loop_running=self.loop_running,
             kill_switch=os.environ.get("ANDURIL_KILL_SWITCH") == "1",
             read_only=self.broker.config.read_only,
             connected=self.broker.connected,
@@ -73,6 +83,7 @@ class BotService:
         await asyncio.to_thread(self.broker.connect)
 
     async def disconnect(self) -> None:
+        await self.stop_loop()
         await asyncio.to_thread(self.broker.disconnect)
 
     async def reconcile(self) -> None:
@@ -82,47 +93,56 @@ class BotService:
         await asyncio.to_thread(self.risk.arm)
 
     async def disarm(self) -> None:
+        await self.stop_loop()
         await asyncio.to_thread(self.risk.disarm)
+
+    async def resolve_price(self, symbol: str, price: Decimal | None) -> Decimal:
+        if price is not None:
+            return price
+        if not self.broker.connected:
+            raise ValueError("broker not connected — pass price= or POST /ibkr/connect")
+        return await asyncio.to_thread(self.broker.get_trade_price, symbol)
 
     async def analyze(
         self,
         symbol: str,
-        price: Decimal,
+        price: Decimal | None = None,
         headline: str | None = None,
-    ) -> tuple[Decision, NewsSignal | None]:
+    ) -> tuple[Decision, NewsSignal | None, Decimal]:
         symbol = symbol.upper()
         if symbol not in self.settings.symbol_list:
             raise ValueError(f"symbol must be one of: {self.settings.symbol_list}")
 
+        resolved_price = await self.resolve_price(symbol, price)
+
         news: NewsSignal | None = None
         if headline:
-            news = await asyncio.to_thread(
-                parse_news_signal, headline, self.llm
-            )
+            news = await asyncio.to_thread(parse_news_signal, headline, self.llm)
 
         decision = await asyncio.to_thread(
             self.decision_engine.decide,
             symbol,
             news=news,
-            price=price,
+            price=resolved_price,
         )
-        return decision, news
+        return decision, news, resolved_price
 
     async def run_once(
         self,
         symbol: str,
-        price: Decimal,
+        price: Decimal | None = None,
         headline: str | None = None,
     ) -> RunResult:
         if not self.settings.bot_enabled:
             raise ValueError("BOT_ENABLED is false")
 
-        decision, news = await self.analyze(symbol, price, headline)
+        decision, news, resolved_price = await self.analyze(symbol, price, headline)
 
         if decision.action == "HOLD" or decision.quantity <= 0:
             return RunResult(
                 decision=decision,
                 news=news,
+                price_used=resolved_price,
                 submitted=False,
                 order_result=None,
                 message="hold — no order placed",
@@ -132,6 +152,7 @@ class BotService:
             return RunResult(
                 decision=decision,
                 news=news,
+                price_used=resolved_price,
                 submitted=False,
                 order_result=None,
                 message="not armed — analysis only",
@@ -142,7 +163,7 @@ class BotService:
             side=decision.action,
             quantity=Decimal(decision.quantity),
             order_type="LMT",
-            limit_price=price,
+            limit_price=resolved_price,
             client_ref=f"anduril-{decision.symbol}-{decision.mode}",
         )
 
@@ -152,6 +173,7 @@ class BotService:
             return RunResult(
                 decision=decision,
                 news=news,
+                price_used=resolved_price,
                 submitted=False,
                 order_result=None,
                 message="broker read-only — order blocked",
@@ -160,6 +182,7 @@ class BotService:
             return RunResult(
                 decision=decision,
                 news=news,
+                price_used=resolved_price,
                 submitted=False,
                 order_result=None,
                 message="risk engine refused to arm",
@@ -168,6 +191,7 @@ class BotService:
             return RunResult(
                 decision=decision,
                 news=news,
+                price_used=resolved_price,
                 submitted=False,
                 order_result=None,
                 message=str(exc),
@@ -176,10 +200,49 @@ class BotService:
         return RunResult(
             decision=decision,
             news=news,
+            price_used=resolved_price,
             submitted=result is not None,
             order_result=result,
             message="order submitted" if result else "duplicate or blocked",
         )
+
+    async def start_loop(self) -> None:
+        if not self.settings.bot_enabled:
+            raise ValueError("BOT_ENABLED is false")
+        if self.loop_running:
+            return
+        self._stop_event.clear()
+        self._loop_task = asyncio.create_task(self._run_loop())
+
+    async def stop_loop(self) -> None:
+        self._stop_event.set()
+        if self._loop_task is not None:
+            try:
+                await asyncio.wait_for(self._loop_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                self._loop_task.cancel()
+            self._loop_task = None
+
+    async def _run_loop(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                for symbol in self.settings.symbol_list:
+                    if self._stop_event.is_set():
+                        break
+                    try:
+                        await self.run_once(symbol)
+                        self._last_error = None
+                    except Exception as exc:
+                        self._last_error = str(exc)
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=self.settings.bot_poll_interval_sec,
+                    )
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            self._loop_task = None
 
     async def account_summary_masked(self) -> dict[str, Any]:
         summary = await asyncio.to_thread(self.broker.get_account_summary)

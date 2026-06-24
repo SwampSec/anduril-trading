@@ -15,11 +15,12 @@ class AppSettings(BaseSettings):
     api_port: int = 9001
 
     lmstudio_base_url: str = "http://localhost:1234/v1"
-    lmstudio_model: str = "local-model"
+    lmstudio_model: str = "auto"
     lmstudio_api_key: str = "lm-studio"
 
     bot_enabled: bool = False
     bot_symbols: str = "SPY"
+    bot_poll_interval_sec: int = 60
 
     @property
     def symbol_list(self) -> list[str]:

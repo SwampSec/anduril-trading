@@ -22,6 +22,7 @@ def test_bot_status_endpoint():
     data = response.json()
     assert "armed" in data
     assert data["armed"] is False
+    assert data["loop_running"] is False
 
 
 @pytest.mark.unit

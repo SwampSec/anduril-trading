@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from broker.config import IBKRConfig
 from broker.order import TradeOrder, account_mode
+from broker.quotes import QuoteSnapshot
 
 try:
     from ibapi.client import EClient
@@ -31,6 +33,10 @@ except ImportError:  # pragma: no cover - exercised when ibapi not installed
 
 ACCOUNT_SUMMARY_TAGS = ("TotalCashValue", "SettledCash", "NetLiquidation")
 INFO_ERROR_CODES = {2104, 2106, 2107, 2158, 2119, 2174}
+TICK_BID = 1
+TICK_ASK = 2
+TICK_LAST = 4
+TICK_CLOSE = 9
 
 
 class IBKRRequestError(RuntimeError):
@@ -84,6 +90,7 @@ class _IBKRSession(EWrapper, EClient):
         self.positions_event = threading.Event()
         self.whatif_event = threading.Event()
         self.order_event = threading.Event()
+        self.quote_event = threading.Event()
         self.error_event = threading.Event()
 
         self.next_order_id: int | None = None
@@ -91,6 +98,10 @@ class _IBKRSession(EWrapper, EClient):
         self.account_id = ""
         self.summary: dict[str, Decimal] = {}
         self.positions: dict[str, Decimal] = {}
+        self.quote_symbol = ""
+        self.quote_bid: Decimal | None = None
+        self.quote_ask: Decimal | None = None
+        self.quote_last: Decimal | None = None
         self.last_error: tuple[int, str] | None = None
         self.whatif_init_margin = Decimal("0")
         self.last_order_status = ""
@@ -182,6 +193,28 @@ class _IBKRSession(EWrapper, EClient):
 
     def positionEndProtoBuf(self, positionEndProto) -> None:
         self.positions_event.set()
+
+    def _record_tick_price(self, tick_type: int, price: float) -> None:
+        if price <= 0:
+            return
+        value = Decimal(str(price))
+        if tick_type == TICK_BID:
+            self.quote_bid = value
+        elif tick_type == TICK_ASK:
+            self.quote_ask = value
+        elif tick_type in {TICK_LAST, TICK_CLOSE}:
+            self.quote_last = value
+        if self.quote_last is not None or (self.quote_bid is not None and self.quote_ask is not None):
+            self.quote_event.set()
+
+    def tickPrice(self, reqId: int, tickType: int, price: float, attrib) -> None:
+        self._record_tick_price(tickType, price)
+
+    def tickPriceProtoBuf(self, tickPriceProto) -> None:
+        self._record_tick_price(tickPriceProto.tickType, tickPriceProto.price)
+
+    def tickSnapshotEnd(self, reqId: int) -> None:
+        self.quote_event.set()
 
     def openOrder(self, orderId: int, contract: Contract, order: Order, orderState) -> None:
         init_margin = getattr(orderState, "initMarginChange", "") or ""
@@ -297,6 +330,35 @@ class IBKRClient:
         self._wait(session.positions_event, "positions")
         session.cancelPositions()
         return dict(session.positions)
+
+    def get_quote(self, symbol: str) -> QuoteSnapshot:
+        session = self._require_session()
+        session.quote_event.clear()
+        session.quote_symbol = symbol.upper()
+        session.quote_bid = None
+        session.quote_ask = None
+        session.quote_last = None
+
+        req_id = 9101
+        contract = _stock_contract(symbol)
+        session.reqMktData(req_id, contract, "", True, False)
+        self._wait(session.quote_event, "market data")
+        session.cancelMktData(req_id)
+
+        return QuoteSnapshot(
+            symbol=session.quote_symbol,
+            bid=session.quote_bid,
+            ask=session.quote_ask,
+            last=session.quote_last,
+            as_of=datetime.now(timezone.utc),
+        )
+
+    def get_trade_price(self, symbol: str) -> Decimal:
+        quote = self.get_quote(symbol)
+        price = quote.trade_price()
+        if price is None or price <= 0:
+            raise IBKRRequestError(f"no market price available for {symbol.upper()}")
+        return price
 
     def what_if(self, order: TradeOrder) -> dict[str, Any]:
         session = self._require_session()

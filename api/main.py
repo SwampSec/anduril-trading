@@ -12,6 +12,7 @@ from config.settings import get_settings
 async def lifespan(app: FastAPI):
     yield
     service = get_bot_service()
+    await service.stop_loop()
     await service.disconnect()
 
 
