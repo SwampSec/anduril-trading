@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.deps import get_bot_service
-from api.routes import bot, ibkr, llm
+from api.routes import audit, bot, ibkr, llm
 from api.schemas import HealthResponse
 from config.settings import get_settings
 
@@ -23,6 +23,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(audit.router)
 app.include_router(ibkr.router)
 app.include_router(llm.router)
 app.include_router(bot.router)

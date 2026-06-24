@@ -42,6 +42,7 @@ TradingSetup/
 
 # Logs
 *.log
+logs/
 
 # Official TWS API download (install via scripts/install_ibapi.sh)
 vendor/twsapi/

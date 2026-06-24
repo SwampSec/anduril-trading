@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from api.services.bot import BotService
+from audit.logger import AuditLogger
 from broker.config import IBKRConfig
 from broker.ibkr_client import IBKRClient
 from config.settings import AppSettings, get_settings
@@ -26,5 +27,16 @@ def get_llm() -> LMStudioClient:
 
 
 @lru_cache
+def get_audit_logger() -> AuditLogger:
+    return AuditLogger()
+
+
+@lru_cache
 def get_bot_service() -> BotService:
-    return BotService(get_settings(), get_broker(), get_risk(), get_llm())
+    return BotService(
+        get_settings(),
+        get_broker(),
+        get_risk(),
+        get_llm(),
+        get_audit_logger(),
+    )
