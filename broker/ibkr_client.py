@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - exercised when ibapi not installed
         pass
 
 ACCOUNT_SUMMARY_TAGS = ("TotalCashValue", "SettledCash", "NetLiquidation")
-INFO_ERROR_CODES = {2104, 2106, 2107, 2158, 2119, 2174}
+INFO_ERROR_CODES = {2104, 2106, 2107, 2158, 2119, 2174, 10089, 10167}
 TICK_BID = 1
 TICK_ASK = 2
 TICK_LAST = 4
@@ -102,6 +102,8 @@ class _IBKRSession(EWrapper, EClient):
         self.quote_bid: Decimal | None = None
         self.quote_ask: Decimal | None = None
         self.quote_last: Decimal | None = None
+        self.hist_event = threading.Event()
+        self.hist_close: Decimal | None = None
         self.last_error: tuple[int, str] | None = None
         self.whatif_init_margin = Decimal("0")
         self.last_order_status = ""
@@ -216,13 +218,29 @@ class _IBKRSession(EWrapper, EClient):
     def tickSnapshotEnd(self, reqId: int) -> None:
         self.quote_event.set()
 
-    def openOrder(self, orderId: int, contract: Contract, order: Order, orderState) -> None:
-        init_margin = getattr(orderState, "initMarginChange", "") or ""
+    def historicalData(self, reqId: int, bar) -> None:
+        self.hist_close = Decimal(str(bar.close))
+
+    def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:
+        self.hist_event.set()
+
+    def _record_whatif_margin(self, order_state) -> None:
+        init_margin = getattr(order_state, "initMarginChange", "") or ""
         if init_margin not in ("", "0", "0.0"):
             try:
                 self.whatif_init_margin = Decimal(str(init_margin))
             except Exception:
                 self.whatif_init_margin = Decimal("0")
+
+    def openOrder(self, orderId: int, contract: Contract, order: Order, orderState) -> None:
+        self._record_whatif_margin(orderState)
+        self.whatif_event.set()
+
+    def openOrderEnd(self) -> None:
+        self.whatif_event.set()
+
+    def openOrderProtoBuf(self, openOrderProto) -> None:
+        self._record_whatif_margin(openOrderProto.orderState)
         self.whatif_event.set()
 
     def orderStatus(
@@ -288,6 +306,9 @@ class IBKRClient:
         if not session.account_id:
             raise IBKRRequestError("no managed account returned by IB Gateway")
 
+        # Prefer delayed quotes when live subscriptions are unavailable (paper API).
+        session.reqMarketDataType(3)
+
         self._session = session
 
     def disconnect(self) -> None:
@@ -333,23 +354,66 @@ class IBKRClient:
 
     def get_quote(self, symbol: str) -> QuoteSnapshot:
         session = self._require_session()
-        session.quote_event.clear()
-        session.quote_symbol = symbol.upper()
-        session.quote_bid = None
-        session.quote_ask = None
-        session.quote_last = None
-
         req_id = 9101
         contract = _stock_contract(symbol)
-        session.reqMktData(req_id, contract, "", True, False)
-        self._wait(session.quote_event, "market data")
-        session.cancelMktData(req_id)
 
-        return QuoteSnapshot(
+        for snapshot in (True, False):
+            session.quote_event.clear()
+            session.quote_symbol = symbol.upper()
+            session.quote_bid = None
+            session.quote_ask = None
+            session.quote_last = None
+            session.reqMktData(req_id, contract, "", snapshot, False, [])
+            try:
+                self._wait(session.quote_event, "market data")
+            except IBKRRequestError:
+                session.cancelMktData(req_id)
+                continue
+            session.cancelMktData(req_id)
+            if session.quote_last is not None or (
+                session.quote_bid is not None and session.quote_ask is not None
+            ):
+                break
+
+        snapshot_obj = QuoteSnapshot(
             symbol=session.quote_symbol,
             bid=session.quote_bid,
             ask=session.quote_ask,
             last=session.quote_last,
+            as_of=datetime.now(timezone.utc),
+        )
+        if snapshot_obj.trade_price() is not None:
+            return snapshot_obj
+
+        return self._historical_close_quote(symbol)
+
+    def _historical_close_quote(self, symbol: str) -> QuoteSnapshot:
+        session = self._require_session()
+        session.hist_event.clear()
+        session.hist_close = None
+        req_id = 9201
+        contract = _stock_contract(symbol)
+        session.reqHistoricalData(
+            req_id,
+            contract,
+            "",
+            "1 D",
+            "1 day",
+            "TRADES",
+            1,
+            1,
+            False,
+            [],
+        )
+        self._wait(session.hist_event, "historical close")
+        session.cancelHistoricalData(req_id)
+        if session.hist_close is None or session.hist_close <= 0:
+            raise IBKRRequestError(f"no historical price for {symbol.upper()}")
+        return QuoteSnapshot(
+            symbol=symbol.upper(),
+            bid=None,
+            ask=None,
+            last=session.hist_close,
             as_of=datetime.now(timezone.utc),
         )
 
