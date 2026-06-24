@@ -60,9 +60,18 @@ echo "  Bot API    →  \${ANDURIL_API_BASE}"
 echo "  Trades     →  http://127.0.0.1:8050/trades"
 echo "  Press Ctrl+C to stop dashboard (API keeps running in background)"
 echo ""
-sleep 1
-open "http://127.0.0.1:8050/trades" 2>/dev/null || true
-exec python "\${INSTALL_ROOT}/dashboard/app.py"
+
+python "\${INSTALL_ROOT}/dashboard/app.py" &
+dash_pid=\$!
+for _ in \$(seq 1 30); do
+  if curl -sf "http://127.0.0.1:8050/" >/dev/null 2>&1; then
+    open "http://127.0.0.1:8050/trades" 2>/dev/null || true
+    break
+  fi
+  sleep 0.5
+done
+
+wait "\${dash_pid}"
 LAUNCH
 chmod +x "${INSTALL_ROOT}/launch.sh"
 
