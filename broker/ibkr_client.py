@@ -13,6 +13,7 @@ try:
     from ibapi.client import EClient
     from ibapi.contract import Contract
     from ibapi.order import Order
+    from ibapi.execution import ExecutionFilter
     from ibapi.order_cancel import OrderCancel
     from ibapi.wrapper import EWrapper
 
@@ -34,6 +35,10 @@ except ImportError:  # pragma: no cover - exercised when ibapi not installed
 
     class OrderCancel:  # type: ignore[no-redef]
         pass
+
+    class ExecutionFilter:  # type: ignore[no-redef]
+        def __init__(self):
+            self.clientId = 0
 
 ACCOUNT_SUMMARY_TAGS = ("TotalCashValue", "SettledCash", "NetLiquidation")
 INFO_ERROR_CODES = {2104, 2106, 2107, 2158, 2119, 2174, 10089, 10167}
@@ -113,8 +118,14 @@ class _IBKRSession(EWrapper, EClient):
         self.whatif_init_margin = Decimal("0")
         self.last_order_status = ""
         self.last_order_id = 0
+        self.last_filled = Decimal("0")
+        self.last_remaining = Decimal("0")
+        self.last_avg_fill_price: Decimal | None = None
+        self.last_fill_price: Decimal | None = None
         self.collect_open_orders = False
         self.open_orders_snapshot: list[dict[str, Any]] = []
+        self.executions_event = threading.Event()
+        self.executions_snapshot: list[dict[str, Any]] = []
 
     def _record_summary_row(
         self, account: str, tag: str, value: str, currency: str
@@ -312,7 +323,33 @@ class _IBKRSession(EWrapper, EClient):
     ) -> None:
         self.last_order_id = orderId
         self.last_order_status = status
+        self.last_filled = Decimal(str(filled))
+        self.last_remaining = Decimal(str(remaining))
+        self.last_avg_fill_price = (
+            Decimal(str(avgFillPrice)) if avgFillPrice and avgFillPrice > 0 else None
+        )
+        self.last_fill_price = (
+            Decimal(str(lastFillPrice)) if lastFillPrice and lastFillPrice > 0 else None
+        )
         self.order_event.set()
+
+    def execDetails(self, reqId: int, contract: Contract, execution) -> None:
+        self.executions_snapshot.append(
+            {
+                "exec_id": execution.execId,
+                "order_id": execution.orderId,
+                "symbol": contract.symbol.upper(),
+                "side": execution.side,
+                "shares": str(Decimal(str(execution.shares))),
+                "price": str(Decimal(str(execution.price))),
+                "time": execution.time,
+                "exchange": execution.exchange,
+                "client_ref": execution.orderRef or "",
+            }
+        )
+
+    def execDetailsEnd(self, reqId: int) -> None:
+        self.executions_event.set()
 
 
 class IBKRClient:
@@ -505,6 +542,14 @@ class IBKRClient:
             "status": session.last_order_status,
             "client_ref": order.client_ref,
             "mode": self.mode,
+            "filled": str(session.last_filled),
+            "remaining": str(session.last_remaining),
+            "avg_fill_price": (
+                str(session.last_avg_fill_price) if session.last_avg_fill_price else None
+            ),
+            "last_fill_price": (
+                str(session.last_fill_price) if session.last_fill_price else None
+            ),
         }
 
     def get_open_orders(self) -> list[dict[str, Any]]:
@@ -530,6 +575,14 @@ class IBKRClient:
             "order_id": session.last_order_id,
             "status": session.last_order_status,
         }
+
+    def get_executions(self) -> list[dict[str, Any]]:
+        session = self._require_session()
+        session.executions_snapshot.clear()
+        session.executions_event.clear()
+        session.reqExecutions(9301, ExecutionFilter())
+        self._wait(session.executions_event, "executions")
+        return list(session.executions_snapshot)
 
     def _active_account_id(self) -> str:
         session = self._require_session()

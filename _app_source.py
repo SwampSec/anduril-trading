@@ -536,6 +536,53 @@ def _bot_status_cards(data):
         _bot_pill("Loop", data.get("loop_running", False)),
     ], style={"display":"flex","flexWrap":"wrap","gap":"8px","marginBottom":"12px"})
 
+def _bot_orders_panel(history, summary, open_orders):
+    rows = (history or {}).get("records") or []
+    positions = (summary or {}).get("positions") or []
+    open_rows = (open_orders or {}).get("orders") or []
+
+    pos_cards = []
+    for p in positions:
+        pos_cards.append(_bot_pill(
+            p.get("symbol", "?"),
+            f"{p.get('net_shares', '0')} @ {p.get('avg_cost') or '—'}",
+            "#2dc653" if float(p.get("net_shares") or 0) > 0 else "#a09ac8",
+        ))
+    pos_el = html.Div(pos_cards, style={"display":"flex","flexWrap":"wrap","gap":"8px","marginBottom":"10px"}) if pos_cards else html.Small("No fills recorded yet.", style={"color":"#6b5fa0","fontSize":"11px"})
+
+    def _row(cells):
+        return html.Tr([html.Td(c, style={"fontSize":"10px","padding":"4px 8px","borderBottom":"1px solid #3d3470"}) for c in cells])
+
+    hist_table = html.Table([
+        html.Thead(html.Tr([html.Th(h, style={"color":"#8b7fbf","fontSize":"10px","padding":"4px 8px"}) for h in ["Time","Event","Sym","Side","Qty","Price","Status"]])),
+        html.Tbody([_row([
+            (r.get("ts") or "")[11:19],
+            r.get("event", ""),
+            r.get("symbol", ""),
+            r.get("side", ""),
+            r.get("quantity") or r.get("shares") or r.get("filled_qty") or "",
+            r.get("fill_price") or r.get("avg_fill_price") or r.get("limit_price") or r.get("price") or "",
+            r.get("status", ""),
+        ]) for r in reversed(rows[-20:])]),
+    ], style={"width":"100%","marginBottom":"12px"}) if rows else html.Small("No order history.", style={"color":"#6b5fa0","fontSize":"11px"})
+
+    open_table = html.Div([
+        html.Small("Open orders (live from IBKR)", style={"color":"#8b7fbf","fontSize":"10px","display":"block","marginBottom":"4px"}),
+        html.Table([
+            html.Thead(html.Tr([html.Th(h, style={"color":"#8b7fbf","fontSize":"10px","padding":"4px 8px"}) for h in ["ID","Sym","Side","Qty","Limit","Status"]])),
+            html.Tbody([_row([
+                str(o.get("order_id", "")),
+                o.get("symbol", ""),
+                o.get("side", ""),
+                o.get("quantity", ""),
+                o.get("limit_price") or "—",
+                o.get("status", ""),
+            ]) for o in open_rows]),
+        ], style={"width":"100%"}),
+    ], style={"marginTop":"10px"}) if open_rows else html.Div()
+
+    return html.Div([html.Small("Positions (avg cost from fills)", style={"color":"#8b7fbf","fontSize":"10px","display":"block","marginBottom":"6px"}), pos_el, hist_table, open_table])
+
 def bot_page():
     return html.Div([
         html.H4("Bot Control", className="text-warning mb-1"),
@@ -550,6 +597,7 @@ def bot_page():
             col(dbc.Button("Connect IBKR", id="bot-connect", color="warning", size="sm"), "auto"),
             col(dbc.Button("Disconnect", id="bot-disconnect", color="secondary", size="sm", outline=True), "auto"),
             col(dbc.Button("Refresh", id="bot-refresh", color="secondary", size="sm", outline=True), "auto"),
+            col(dbc.Button("Sync orders", id="bot-sync-orders", color="secondary", size="sm", outline=True), "auto"),
             col(dbc.Button("Reconcile", id="bot-reconcile", color="secondary", size="sm", outline=True), "auto"),
             col(dbc.Button("Arm", id="bot-arm", color="danger", size="sm", outline=True), "auto"),
             col(dbc.Button("Disarm", id="bot-disarm", color="success", size="sm", outline=True), "auto"),
@@ -566,6 +614,9 @@ def bot_page():
             "fontSize":"11px","maxHeight":"280px","overflow":"auto","border":"1px solid #3d3470",
         }), type="circle", color="#e8621a"),
         html.Hr(style={"borderColor":"#3d3470","margin":"16px 0"}),
+        html.H6("Order history", style={"color":"#e8621a","marginBottom":"8px"}),
+        html.Div(id="bot-orders"),
+        html.Hr(style={"borderColor":"#3d3470","margin":"16px 0"}),
         html.H6("Recent audit", style={"color":"#e8621a","marginBottom":"8px"}),
         dcc.Loading(html.Pre(id="bot-audit", style={
             "background":"#12102a","color":"#a09ac8","padding":"10px","fontSize":"10px",
@@ -575,12 +626,14 @@ def bot_page():
 
 @app.callback(
     Output("bot-status-cards", "children"),
+    Output("bot-orders", "children"),
     Output("bot-audit", "children"),
     Output("bot-action-status", "children"),
     Input("bot-tick", "n_intervals"),
     Input("bot-connect", "n_clicks"),
     Input("bot-disconnect", "n_clicks"),
     Input("bot-refresh", "n_clicks"),
+    Input("bot-sync-orders", "n_clicks"),
     Input("bot-reconcile", "n_clicks"),
     Input("bot-arm", "n_clicks"),
     Input("bot-disarm", "n_clicks"),
@@ -589,7 +642,7 @@ def bot_page():
     State("bot-symbol", "value"),
     State("bot-headline", "value"),
     prevent_initial_call=False)
-def update_bot(_tick, n_conn, n_disc, n_ref, n_rec, n_arm, n_dis, n_an, n_run, symbol, headline):
+def update_bot(_tick, n_conn, n_disc, n_ref, n_sync, n_rec, n_arm, n_dis, n_an, n_run, symbol, headline):
     ctx = callback_context
     triggered = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else "bot-tick"
     msg = ""
@@ -598,6 +651,7 @@ def update_bot(_tick, n_conn, n_disc, n_ref, n_rec, n_arm, n_dis, n_an, n_run, s
     actions = {
         "bot-connect": ("POST", "/ibkr/connect", None, "Connected to IBKR"),
         "bot-disconnect": ("POST", "/ibkr/disconnect", None, "Disconnected"),
+        "bot-sync-orders": ("POST", "/orders/sync", None, "Orders synced from IBKR"),
         "bot-reconcile": ("POST", "/bot/reconcile", None, "Reconciled ledger"),
         "bot-arm": ("POST", "/bot/arm", None, "Armed (orders allowed if enabled)"),
         "bot-disarm": ("POST", "/bot/disarm", None, "Disarmed"),
@@ -634,12 +688,21 @@ def update_bot(_tick, n_conn, n_disc, n_ref, n_rec, n_arm, n_dis, n_an, n_run, s
     audit_r = _api_request("GET", "/audit/recent", params={"limit": 8})
     audit_txt = json.dumps(audit_r.get("data"), indent=2) if audit_r.get("ok") else str(audit_r.get("error", ""))
 
+    hist_r = _api_request("GET", "/orders", params={"limit": 30})
+    sum_r = _api_request("GET", "/orders/summary")
+    open_r = _api_request("GET", "/orders/open")
+    orders_el = _bot_orders_panel(
+        hist_r.get("data") if hist_r.get("ok") else None,
+        sum_r.get("data") if sum_r.get("ok") else None,
+        open_r.get("data") if open_r.get("ok") else None,
+    )
+
     if not msg and triggered == "bot-tick":
         msg = "Polling API"
     elif not msg:
         msg = "Updated"
 
-    return cards, audit_txt, msg
+    return cards, orders_el, audit_txt, msg
 
 app.layout = html.Div([
     dcc.Location(id="url"),

@@ -8,6 +8,7 @@ from broker.config import IBKRConfig
 from broker.ibkr_client import IBKRClient
 from config.settings import AppSettings, get_settings
 from llm.client import LMStudioClient
+from journal.orders import OrderJournal
 from risk.guardrails import RiskEngine
 
 
@@ -32,6 +33,11 @@ def get_audit_logger() -> AuditLogger:
 
 
 @lru_cache
+def get_order_journal() -> OrderJournal:
+    return OrderJournal()
+
+
+@lru_cache
 def get_bot_service() -> BotService:
     return BotService(
         get_settings(),
@@ -39,4 +45,5 @@ def get_bot_service() -> BotService:
         get_risk(),
         get_llm(),
         get_audit_logger(),
+        get_order_journal(),
     )

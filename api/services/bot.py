@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from audit.logger import AuditLogger
+from journal.orders import OrderJournal
 from broker.ibkr_client import IBKRClient, IBKRReadOnlyError
 from broker.logging_utils import mask_account_id
 from broker.order import TradeOrder
@@ -47,6 +48,7 @@ class BotService:
         risk: RiskEngine,
         llm: LMStudioClient,
         audit: AuditLogger | None = None,
+        order_journal: OrderJournal | None = None,
     ) -> None:
         self.settings = settings
         self.broker = broker
@@ -58,6 +60,7 @@ class BotService:
         )
         self.llm = llm
         self.audit = audit or AuditLogger()
+        self.order_journal = order_journal or OrderJournal()
         self._loop_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_error: str | None = None
@@ -243,8 +246,67 @@ class BotService:
             order_result=order_result,
             message="order submitted" if order_result else "duplicate or blocked",
         )
+        if order_result:
+            await asyncio.to_thread(
+                self._record_order,
+                decision,
+                order,
+                order_result,
+                limit_price,
+            )
         await self._log_run_once(result, headline, limit_price=limit_price)
         return result
+
+    def _record_order(
+        self,
+        decision: Decision,
+        order: TradeOrder,
+        order_result: dict[str, Any],
+        limit_price: Decimal,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "source": "bot",
+            "order_id": order_result.get("order_id"),
+            "symbol": decision.symbol,
+            "side": order.side,
+            "quantity": str(order.quantity),
+            "limit_price": str(limit_price),
+            "status": order_result.get("status"),
+            "client_ref": order_result.get("client_ref"),
+            "mode": order_result.get("mode"),
+            "filled_qty": order_result.get("filled"),
+            "remaining_qty": order_result.get("remaining"),
+            "avg_fill_price": order_result.get("avg_fill_price"),
+            "last_fill_price": order_result.get("last_fill_price"),
+        }
+        self.order_journal.record("order", payload)
+        filled = Decimal(str(order_result.get("filled") or "0"))
+        avg = order_result.get("avg_fill_price")
+        if filled > 0 and avg:
+            self.order_journal.record(
+                "fill",
+                {
+                    "source": "bot",
+                    "order_id": order_result.get("order_id"),
+                    "symbol": decision.symbol,
+                    "side": order.side,
+                    "shares": str(filled),
+                    "filled_qty": str(filled),
+                    "fill_price": avg,
+                    "price": avg,
+                    "client_ref": order_result.get("client_ref"),
+                    "mode": order_result.get("mode"),
+                },
+            )
+
+    async def sync_order_history(self) -> dict[str, Any]:
+        executions = await asyncio.to_thread(self.broker.get_executions)
+        added = await asyncio.to_thread(self.order_journal.sync_executions, executions)
+        return {
+            "executions_fetched": len(executions),
+            "fills_added": added,
+            "summary": self.order_journal.summary(),
+        }
 
     def _decision_payload(
         self,
