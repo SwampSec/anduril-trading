@@ -49,6 +49,37 @@ NEWSDATA_KEY   = os.getenv("NEWSDATA_API_KEY", "")
 TWELVE_KEY     = os.getenv("TWELVE_DATA_API_KEY", "")
 fh = finnhub.Client(api_key=FINNHUB_KEY) if FINNHUB_KEY and FINNHUB_KEY != "YOUR_KEY_HERE" else None
 
+for _broker_env in [ANDURIL_ROOT / ".env.broker", Path(__file__).resolve().parent.parent / ".env.broker"]:
+    if _broker_env.is_file():
+        load_dotenv(_broker_env, override=False)
+        break
+
+try:
+    from dashboard.api_client import request as _api_request
+except ImportError:
+    def _api_request(method, path, params=None, timeout=12):
+        host = os.getenv("API_HOST", "127.0.0.1")
+        port = os.getenv("API_PORT", "9001")
+        base = os.getenv("ANDURIL_API_BASE", f"http://{host}:{port}").rstrip("/")
+        url = f"{base}{path}"
+        try:
+            r = requests.request(method, url, params=params, timeout=timeout)
+            if r.status_code >= 400:
+                detail = r.text[:500]
+                try:
+                    detail = r.json().get("detail", detail)
+                except Exception:
+                    pass
+                return {"ok": False, "status": r.status_code, "error": detail}
+            return {"ok": True, "data": r.json()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+ANDURIL_API_BASE = os.getenv(
+    "ANDURIL_API_BASE",
+    f"http://{os.getenv('API_HOST', '127.0.0.1')}:{os.getenv('API_PORT', '9001')}",
+).rstrip("/")
+
 # -- Helpers ---------------------------------------------------
 def col(children, width):
     return dbc.Col(children, width=width)
@@ -418,6 +449,7 @@ SIDEBAR = dbc.Nav([
     dbc.NavLink("Options",     href="/options",     active="exact", className="py-2"),
     dbc.NavLink("Opt Guide",   href="/options-guide", external_link=True, className="py-2"),
     dbc.NavLink("Copilot",     href="/copilot",     active="exact", className="py-2"),
+    dbc.NavLink("Bot Control", href="/bot",         active="exact", className="py-2"),
     dbc.NavLink("Guide",       href="/guide",       external_link=True, className="py-2"),
 ], vertical=True, pills=True,
    style={"width":"185px","minHeight":"100vh","background":"#251f45",
@@ -484,6 +516,131 @@ def update_copilot(n_run, n_llm, ticker, horizon, workflow):
     except Exception as e:
         return f"Error: {e}", "Failed"
 
+def _bot_pill(label, value, color="#a09ac8"):
+    return html.Div([
+        html.Small(label, style={"color":"#6b5fa0","fontSize":"10px","display":"block"}),
+        html.Span(str(value), style={"color":color,"fontWeight":"600","fontSize":"13px"}),
+    ], style={"background":"#1c1838","border":"1px solid #3d3470","borderRadius":"6px",
+              "padding":"8px 12px","minWidth":"110px"})
+
+def _bot_status_cards(data):
+    if not data:
+        return html.P("No status yet — connect to the API.", style={"color":"#6b5fa0","fontSize":"12px"})
+    armed = data.get("armed", False)
+    return html.Div([
+        _bot_pill("API", ANDURIL_API_BASE, "#e8621a"),
+        _bot_pill("Connected", data.get("connected", False), "#2dc653" if data.get("connected") else "#e63946"),
+        _bot_pill("Mode", data.get("mode") or "—"),
+        _bot_pill("Armed", armed, "#e63946" if armed else "#2dc653"),
+        _bot_pill("Read-only", data.get("read_only", True)),
+        _bot_pill("Loop", data.get("loop_running", False)),
+    ], style={"display":"flex","flexWrap":"wrap","gap":"8px","marginBottom":"12px"})
+
+def bot_page():
+    return html.Div([
+        html.H4("Bot Control", className="text-warning mb-1"),
+        html.Small(
+            f"Local API at {ANDURIL_API_BASE}. Start with ./scripts/run_api.sh — IB Gateway paper on port 4002.",
+            className="d-block mb-3", style={"fontSize":"11px","color":"#d8d2f0"}),
+        dbc.Alert(
+            "Orders require BOT_ENABLED=true, arm, and read-only off. Default posture is analyze-only.",
+            color="secondary", className="py-2", style={"fontSize":"11px"}),
+        html.Div(id="bot-status-cards"),
+        dbc.Row([
+            col(dbc.Button("Connect IBKR", id="bot-connect", color="warning", size="sm"), "auto"),
+            col(dbc.Button("Disconnect", id="bot-disconnect", color="secondary", size="sm", outline=True), "auto"),
+            col(dbc.Button("Refresh", id="bot-refresh", color="secondary", size="sm", outline=True), "auto"),
+            col(dbc.Button("Reconcile", id="bot-reconcile", color="secondary", size="sm", outline=True), "auto"),
+            col(dbc.Button("Arm", id="bot-arm", color="danger", size="sm", outline=True), "auto"),
+            col(dbc.Button("Disarm", id="bot-disarm", color="success", size="sm", outline=True), "auto"),
+        ], className="mb-3 g-2 align-items-center"),
+        dbc.Row([
+            col(dbc.Input(id="bot-symbol", value="SPY", placeholder="Symbol", className="bg-dark text-light border-secondary"), 2),
+            col(dbc.Input(id="bot-headline", placeholder="Optional headline for news overlay", className="bg-dark text-light border-secondary"), 6),
+            col(dbc.Button("Analyze", id="bot-analyze", color="warning", size="sm"), "auto"),
+            col(dbc.Button("Run once", id="bot-run-once", color="danger", size="sm", outline=True), "auto"),
+        ], className="mb-3 g-2 align-items-center"),
+        html.Span(id="bot-action-status", style={"fontSize":"11px","color":"#d8d2f0"}),
+        dcc.Loading(html.Pre(id="bot-output", style={
+            "background":"#1c1838","color":"#e8e4f0","padding":"12px","borderRadius":"6px",
+            "fontSize":"11px","maxHeight":"280px","overflow":"auto","border":"1px solid #3d3470",
+        }), type="circle", color="#e8621a"),
+        html.Hr(style={"borderColor":"#3d3470","margin":"16px 0"}),
+        html.H6("Recent audit", style={"color":"#e8621a","marginBottom":"8px"}),
+        dcc.Loading(html.Pre(id="bot-audit", style={
+            "background":"#12102a","color":"#a09ac8","padding":"10px","fontSize":"10px",
+            "maxHeight":"200px","overflow":"auto",
+        }), type="dot", color="#e8621a"),
+    ])
+
+@app.callback(
+    Output("bot-status-cards", "children"),
+    Output("bot-audit", "children"),
+    Output("bot-action-status", "children"),
+    Input("bot-tick", "n_intervals"),
+    Input("bot-connect", "n_clicks"),
+    Input("bot-disconnect", "n_clicks"),
+    Input("bot-refresh", "n_clicks"),
+    Input("bot-reconcile", "n_clicks"),
+    Input("bot-arm", "n_clicks"),
+    Input("bot-disarm", "n_clicks"),
+    Input("bot-analyze", "n_clicks"),
+    Input("bot-run-once", "n_clicks"),
+    State("bot-symbol", "value"),
+    State("bot-headline", "value"),
+    prevent_initial_call=False)
+def update_bot(_tick, n_conn, n_disc, n_ref, n_rec, n_arm, n_dis, n_an, n_run, symbol, headline):
+    ctx = callback_context
+    triggered = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else "bot-tick"
+    msg = ""
+    output = ""
+
+    actions = {
+        "bot-connect": ("POST", "/ibkr/connect", None, "Connected to IBKR"),
+        "bot-disconnect": ("POST", "/ibkr/disconnect", None, "Disconnected"),
+        "bot-reconcile": ("POST", "/bot/reconcile", None, "Reconciled ledger"),
+        "bot-arm": ("POST", "/bot/arm", None, "Armed (orders allowed if enabled)"),
+        "bot-disarm": ("POST", "/bot/disarm", None, "Disarmed"),
+    }
+    if triggered in actions:
+        method, path, params, ok_msg = actions[triggered]
+        r = _api_request(method, path, params=params)
+        if r.get("ok"):
+            msg = ok_msg
+            output = json.dumps(r.get("data"), indent=2)
+        else:
+            msg = f"Error: {r.get('error')}"
+            output = msg
+    elif triggered == "bot-analyze":
+        sym = (symbol or "SPY").strip().upper()
+        params = {"symbol": sym}
+        if headline and headline.strip():
+            params["headline"] = headline.strip()[:4000]
+        r = _api_request("POST", "/bot/analyze", params=params)
+        msg = f"Analyze {sym}"
+        output = json.dumps(r.get("data") if r.get("ok") else r, indent=2)
+    elif triggered == "bot-run-once":
+        sym = (symbol or "SPY").strip().upper()
+        params = {"symbol": sym}
+        if headline and headline.strip():
+            params["headline"] = headline.strip()[:4000]
+        r = _api_request("POST", "/bot/run-once", params=params)
+        msg = f"Run once {sym}"
+        output = json.dumps(r.get("data") if r.get("ok") else r, indent=2)
+
+    status_r = _api_request("GET", "/bot/status")
+    cards = _bot_status_cards(status_r.get("data") if status_r.get("ok") else None)
+
+    audit_r = _api_request("GET", "/audit/recent", params={"limit": 8})
+    audit_txt = json.dumps(audit_r.get("data"), indent=2) if audit_r.get("ok") else str(audit_r.get("error", ""))
+
+    if not msg and triggered == "bot-tick":
+        msg = "Polling API"
+    elif not msg:
+        msg = "Updated"
+
+    return cards, audit_txt, msg
+
 app.layout = html.Div([
     dcc.Location(id="url"),
     dcc.Store(id="_css-inject",data=1),
@@ -491,6 +648,7 @@ app.layout = html.Div([
     dcc.Store(id="ch-trades",   data=None),
     dcc.Interval(id="wl-tick",  interval=30000, n_intervals=0, disabled=True),
     dcc.Interval(id="l2-tick",  interval=2000,  n_intervals=0, disabled=True),
+    dcc.Interval(id="bot-tick", interval=10000, n_intervals=0, disabled=True),
     SIDEBAR,
     html.Div(id="page-content",
         style={"marginLeft":"195px","padding":"20px","minHeight":"100vh",
@@ -507,7 +665,7 @@ def route(path):
          "/chart":chart_page,"/level2":level2_page,
          "/screener":screener_page,"/news":news_page,
          "/live-news":live_news_page,"/financials":fin_page,"/options":options_page,
-         "/copilot":copilot_page}
+         "/copilot":copilot_page,"/bot":bot_page}
     return p.get(path, watchlist_page)()
 
 app.clientside_callback(
@@ -542,6 +700,9 @@ def control_wl_poll(pathname, wl):
 
 @app.callback(Output("l2-tick","disabled"), Input("url","pathname"))
 def control_l2_poll(pathname): return pathname != "/level2"
+
+@app.callback(Output("bot-tick","disabled"), Input("url","pathname"))
+def control_bot_poll(pathname): return pathname != "/bot"
 
 # ── Earnings calendar ──────────────────────────────────────────
 @app.callback(Output("nw-earnings-cal","children"),
@@ -3162,5 +3323,6 @@ def update_conviction(n,active_tab,ticker):
 if __name__ == "__main__":
     print("\\n  Trading Dashboard starting...")
     print(f"  Copilot module: {'OK' if _COPILOT_OK else 'NOT FOUND — check ~/Anduril/copilot/'}")
+    print(f"  Bot API: {ANDURIL_API_BASE} (run ./scripts/run_api.sh)")
     print("  Open your browser at:  http://127.0.0.1:8050\\n")
     app.run(debug=False, host="127.0.0.1", port=8050)
