@@ -21,6 +21,7 @@ class AppSettings(BaseSettings):
     bot_enabled: bool = False
     bot_symbols: str = "SPY"
     bot_poll_interval_sec: int = 60
+    bot_max_shares: int = Field(default=10, ge=1, le=10_000)
 
     @property
     def symbol_list(self) -> list[str]:

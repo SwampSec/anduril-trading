@@ -67,5 +67,6 @@ echo "$AUDIT" | grep -q '"records"' && pass "audit log reachable" || fail "audit
 
 echo ""
 echo "Fire drill complete."
-echo "Next (manual, only when ready): set BOT_ENABLED=true, POST /bot/arm, tiny paper order via /bot/run-once."
-echo "Keep IBKR_READ_ONLY=true until you intentionally disable it for paper order tests."
+echo "Paper order test (manual): BOT_ENABLED=true, IBKR_READ_ONLY=false, POST /bot/arm, POST /bot/run-once?symbol=SPY"
+echo "Orders are capped by BOT_MAX_SHARES (default 10). Limit price always uses live/delayed quote."
+echo "View/cancel API orders: GET /ibkr/orders  POST /ibkr/orders/{id}/cancel"

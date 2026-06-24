@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from api.deps import get_bot_service, get_broker
 from api.schemas import IBKRStatusResponse
 from api.services.bot import BotService
-from broker.ibkr_client import IBKRClient, IBKRRequestError
+from broker.ibkr_client import IBKRClient, IBKRReadOnlyError, IBKRRequestError
 
 router = APIRouter(prefix="/ibkr", tags=["ibkr"])
 
@@ -78,5 +78,27 @@ async def ibkr_quote(
             "trade_price": str(price) if price is not None else None,
             "as_of": quote.as_of.isoformat(),
         }
+    except IBKRRequestError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/orders")
+async def ibkr_orders(broker: Annotated[IBKRClient, Depends(get_broker)]) -> dict:
+    try:
+        orders = await asyncio.to_thread(broker.get_open_orders)
+        return {"count": len(orders), "orders": orders}
+    except IBKRRequestError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/orders/{order_id}/cancel")
+async def ibkr_cancel_order(
+    order_id: int,
+    broker: Annotated[IBKRClient, Depends(get_broker)],
+) -> dict:
+    try:
+        return await asyncio.to_thread(broker.cancel_order, order_id)
+    except IBKRReadOnlyError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except IBKRRequestError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -50,7 +51,11 @@ class BotService:
         self.settings = settings
         self.broker = broker
         self.risk = risk
-        self.decision_engine = DecisionEngine(broker=broker, risk=risk)
+        self.decision_engine = DecisionEngine(
+            broker=broker,
+            risk=risk,
+            max_shares=settings.bot_max_shares,
+        )
         self.llm = llm
         self.audit = audit or AuditLogger()
         self._loop_task: asyncio.Task | None = None
@@ -171,13 +176,27 @@ class BotService:
             await self._log_run_once(result, headline)
             return result
 
+        limit_price = await self.resolve_price(symbol, None)
+        quantity = min(decision.quantity, self.settings.bot_max_shares)
+        if quantity <= 0:
+            result = RunResult(
+                decision=decision,
+                news=news,
+                price_used=resolved_price,
+                submitted=False,
+                order_result=None,
+                message="hold — quantity capped to zero",
+            )
+            await self._log_run_once(result, headline, limit_price=limit_price)
+            return result
+
         order = TradeOrder(
             symbol=decision.symbol,
             side=decision.action,
-            quantity=Decimal(decision.quantity),
+            quantity=Decimal(quantity),
             order_type="LMT",
-            limit_price=resolved_price,
-            client_ref=f"anduril-{decision.symbol}-{decision.mode}",
+            limit_price=limit_price,
+            client_ref=f"anduril-{decision.symbol}-{int(time.time())}",
         )
 
         try:
@@ -191,7 +210,7 @@ class BotService:
                 order_result=None,
                 message="broker read-only — order blocked",
             )
-            await self._log_run_once(result, headline)
+            await self._log_run_once(result, headline, limit_price=limit_price)
             return result
         except RefuseToArm:
             result = RunResult(
@@ -202,7 +221,7 @@ class BotService:
                 order_result=None,
                 message="risk engine refused to arm",
             )
-            await self._log_run_once(result, headline)
+            await self._log_run_once(result, headline, limit_price=limit_price)
             return result
         except ValueError as exc:
             result = RunResult(
@@ -213,7 +232,7 @@ class BotService:
                 order_result=None,
                 message=str(exc),
             )
-            await self._log_run_once(result, headline)
+            await self._log_run_once(result, headline, limit_price=limit_price)
             return result
 
         result = RunResult(
@@ -224,7 +243,7 @@ class BotService:
             order_result=order_result,
             message="order submitted" if order_result else "duplicate or blocked",
         )
-        await self._log_run_once(result, headline)
+        await self._log_run_once(result, headline, limit_price=limit_price)
         return result
 
     def _decision_payload(
@@ -247,7 +266,13 @@ class BotService:
             "news_event_type": news.event_type if news else None,
         }
 
-    async def _log_run_once(self, result: RunResult, headline: str | None) -> None:
+    async def _log_run_once(
+        self,
+        result: RunResult,
+        headline: str | None,
+        *,
+        limit_price: Decimal | None = None,
+    ) -> None:
         payload = self._decision_payload(
             result.decision, result.news, result.price_used, headline
         )
@@ -258,6 +283,8 @@ class BotService:
                 "order_result": result.order_result,
             }
         )
+        if limit_price is not None:
+            payload["limit_price"] = str(limit_price)
         await self._log_event("run_once", payload)
 
     async def _log_event(self, event: str, payload: dict[str, Any]) -> None:

@@ -31,10 +31,12 @@ class DecisionEngine:
         risk: RiskEngine | None = None,
         *,
         base_conviction: float = 0.6,
+        max_shares: int | None = None,
     ) -> None:
         self.broker = broker
         self.risk = risk
         self.base_conviction = base_conviction
+        self.max_shares = max_shares
 
     def decide(
         self,
@@ -58,6 +60,8 @@ class DecisionEngine:
 
         max_qty = self.risk.max_buy_quantity(symbol, price)
         qty = int(max_qty * conviction)
+        if self.max_shares is not None:
+            qty = min(qty, self.max_shares)
         if qty <= 0:
             return Decision(symbol=symbol, action="HOLD", quantity=0, mode=mode)
 

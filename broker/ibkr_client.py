@@ -13,6 +13,7 @@ try:
     from ibapi.client import EClient
     from ibapi.contract import Contract
     from ibapi.order import Order
+    from ibapi.order_cancel import OrderCancel
     from ibapi.wrapper import EWrapper
 
     IBAPI_AVAILABLE = True
@@ -29,6 +30,9 @@ except ImportError:  # pragma: no cover - exercised when ibapi not installed
         pass
 
     class Order:  # type: ignore[no-redef]
+        pass
+
+    class OrderCancel:  # type: ignore[no-redef]
         pass
 
 ACCOUNT_SUMMARY_TAGS = ("TotalCashValue", "SettledCash", "NetLiquidation")
@@ -92,6 +96,7 @@ class _IBKRSession(EWrapper, EClient):
         self.order_event = threading.Event()
         self.quote_event = threading.Event()
         self.error_event = threading.Event()
+        self.open_orders_event = threading.Event()
 
         self.next_order_id: int | None = None
         self.managed_accounts: list[str] = []
@@ -108,6 +113,8 @@ class _IBKRSession(EWrapper, EClient):
         self.whatif_init_margin = Decimal("0")
         self.last_order_status = ""
         self.last_order_id = 0
+        self.collect_open_orders = False
+        self.open_orders_snapshot: list[dict[str, Any]] = []
 
     def _record_summary_row(
         self, account: str, tag: str, value: str, currency: str
@@ -232,16 +239,62 @@ class _IBKRSession(EWrapper, EClient):
             except Exception:
                 self.whatif_init_margin = Decimal("0")
 
+    def _record_open_order(
+        self,
+        order_id: int,
+        contract: Contract,
+        order: Order,
+        order_state,
+    ) -> None:
+        if not self.collect_open_orders:
+            return
+        limit: Decimal | None = None
+        if str(order.orderType).upper() == "LMT" and order.lmtPrice:
+            limit = Decimal(str(order.lmtPrice))
+        self.open_orders_snapshot.append(
+            {
+                "order_id": order_id,
+                "symbol": contract.symbol.upper(),
+                "side": order.action,
+                "quantity": str(Decimal(str(order.totalQuantity))),
+                "order_type": order.orderType,
+                "limit_price": str(limit) if limit is not None else None,
+                "status": order_state.status,
+                "client_ref": order.orderRef or "",
+            }
+        )
+
     def openOrder(self, orderId: int, contract: Contract, order: Order, orderState) -> None:
         self._record_whatif_margin(orderState)
         self.whatif_event.set()
+        self._record_open_order(orderId, contract, order, orderState)
 
     def openOrderEnd(self) -> None:
         self.whatif_event.set()
+        self.open_orders_event.set()
 
     def openOrderProtoBuf(self, openOrderProto) -> None:
         self._record_whatif_margin(openOrderProto.orderState)
         self.whatif_event.set()
+        if self.collect_open_orders:
+            order = openOrderProto.order
+            contract = openOrderProto.contract
+            state = openOrderProto.orderState
+            limit: Decimal | None = None
+            if order.orderType.upper() == "LMT" and order.lmtPrice:
+                limit = Decimal(str(order.lmtPrice))
+            self.open_orders_snapshot.append(
+                {
+                    "order_id": openOrderProto.orderId,
+                    "symbol": contract.symbol.upper(),
+                    "side": order.action,
+                    "quantity": str(Decimal(str(order.totalQuantity))),
+                    "order_type": order.orderType,
+                    "limit_price": str(limit) if limit is not None else None,
+                    "status": state.status,
+                    "client_ref": order.orderRef or "",
+                }
+            )
 
     def orderStatus(
         self,
@@ -452,6 +505,30 @@ class IBKRClient:
             "status": session.last_order_status,
             "client_ref": order.client_ref,
             "mode": self.mode,
+        }
+
+    def get_open_orders(self) -> list[dict[str, Any]]:
+        session = self._require_session()
+        session.collect_open_orders = True
+        session.open_orders_snapshot.clear()
+        session.open_orders_event.clear()
+        session.reqAllOpenOrders()
+        self._wait(session.open_orders_event, "open orders")
+        session.collect_open_orders = False
+        return list(session.open_orders_snapshot)
+
+    def cancel_order(self, order_id: int) -> dict[str, Any]:
+        if self.config.read_only:
+            raise IBKRReadOnlyError(
+                "IBKR client is read-only; disable IBKR_READ_ONLY to cancel orders"
+            )
+        session = self._require_session()
+        session.order_event.clear()
+        session.cancelOrder(order_id, OrderCancel())
+        self._wait(session.order_event, "order cancel")
+        return {
+            "order_id": session.last_order_id,
+            "status": session.last_order_status,
         }
 
     def _active_account_id(self) -> str:
